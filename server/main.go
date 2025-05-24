@@ -6,8 +6,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"runtime"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"go_rocketmq_sdk/proto"
@@ -89,6 +92,27 @@ func main() {
 	log.Printf("   - Set MESSAGE_BUFFER_SIZE=%d for message buffering", cfg.MessageBufferSize)
 	log.Printf("🧹 Consumer cleanup enabled: inactive consumers will be cleaned up after 1 minute")
 	log.Printf("🔄 Supports predefined consumer groups from 字节云 with auto-reconnection")
+
+	// 添加信号处理机制，在服务停止时优雅关闭所有生产者和消费者
+	go func() {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+		<-signals
+
+		log.Println("🛑 RocketMQ Proxy Server is shutting down...")
+		log.Println("🧹 Cleaning up all RocketMQ resources...")
+
+		// 清理所有生产者
+		rocketmqService.ShutdownAllProducers()
+
+		// 清理所有消费者 - 需要先获取所有消费者ID
+		rocketmqService.ShutdownAllConsumers()
+
+		log.Println("✅ All RocketMQ resources cleaned up")
+		log.Println("🔚 Stopping gRPC server...")
+
+		s.GracefulStop()
+	}()
 
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
@@ -174,10 +198,21 @@ func startProducerCleanupTask(rocketmqService *service.RocketMQProxyService) {
 	ticker := time.NewTicker(30 * time.Second) // 更频繁的清理检查：30秒
 	defer ticker.Stop()
 
-	log.Printf("🧹 Starting producer cleanup task (check interval: 30s, timeout: 1 minute)")
+	// 引用计数验证计时器 - 每5分钟检查一次
+	refCountCheckTicker := time.NewTicker(5 * time.Minute)
+	defer refCountCheckTicker.Stop()
 
-	for range ticker.C {
-		// 清理超过1分钟未活跃的生产者（更快的清理）
-		rocketmqService.CleanupInactiveProducers(1 * time.Minute)
+	log.Printf("🧹 Starting producer cleanup task (check interval: 30s, timeout: 1 minute)")
+	log.Printf("🔍 Producer reference count validation enabled (check interval: 5 minutes)")
+
+	for {
+		select {
+		case <-ticker.C:
+			// 清理超过1分钟未活跃的生产者（更快的清理）
+			rocketmqService.CleanupInactiveProducers(1 * time.Minute)
+		case <-refCountCheckTicker.C:
+			// 验证并修复引用计数不一致问题
+			rocketmqService.ValidateAndFixProducerRefCounts()
+		}
 	}
 }

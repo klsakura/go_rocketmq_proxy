@@ -63,6 +63,11 @@ func (m *Metrics) DecActiveProducers() {
 	atomic.AddInt64(&m.ActiveProducers, -1)
 }
 
+// ResetActiveProducers 重置活跃生产者数为0 - 用于服务关闭时
+func (m *Metrics) ResetActiveProducers() {
+	atomic.StoreInt64(&m.ActiveProducers, 0)
+}
+
 // IncActiveConsumers 增加活跃消费者数
 func (m *Metrics) IncActiveConsumers() {
 	atomic.AddInt64(&m.ActiveConsumers, 1)
@@ -71,6 +76,11 @@ func (m *Metrics) IncActiveConsumers() {
 // DecActiveConsumers 减少活跃消费者数
 func (m *Metrics) DecActiveConsumers() {
 	atomic.AddInt64(&m.ActiveConsumers, -1)
+}
+
+// ResetActiveConsumers 重置活跃消费者数为0 - 用于服务关闭时
+func (m *Metrics) ResetActiveConsumers() {
+	atomic.StoreInt64(&m.ActiveConsumers, 0)
 }
 
 // IncMessagesSent 增加发送消息计数

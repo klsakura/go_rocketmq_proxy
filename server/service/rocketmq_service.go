@@ -140,6 +140,10 @@ func (s *RocketMQProxyService) CreateProducer(ctx context.Context, req *proto.Cr
 	// 启动生产者
 	err = p.Start()
 	if err != nil {
+		// 启动失败时清理已创建的生产者资源
+		if shutdownErr := p.Shutdown(); shutdownErr != nil {
+			log.Printf("⚠️ Error shutting down failed producer during cleanup: %v", shutdownErr)
+		}
 		return &proto.CreateProducerResponse{
 			Success: false,
 			Message: fmt.Sprintf("Failed to start producer: %v", err),
@@ -823,12 +827,15 @@ func (s *RocketMQProxyService) cleanupProducerInternal(producerID string) error 
 	// 从映射中删除
 	delete(s.producers, producerID)
 
-	// 清理共享映射
+	// 清理共享映射 - 删除所有指向该producerID的映射
+	keysToDelete := make([]ConnectionKey, 0)
 	for key, id := range s.sharedProducers {
 		if id == producerID {
-			delete(s.sharedProducers, key)
-			break
+			keysToDelete = append(keysToDelete, key)
 		}
+	}
+	for _, key := range keysToDelete {
+		delete(s.sharedProducers, key)
 	}
 
 	// 减少生产者计数
@@ -1020,4 +1027,105 @@ func calculateDelayLevel(deliverTime int64) int {
 	}
 
 	return 18 // 最大延时等级
+}
+
+// ShutdownAllProducers 优雅关闭所有生产者 - 用于服务停止时
+func (s *RocketMQProxyService) ShutdownAllProducers() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	log.Printf("🛑 Shutting down all producers...")
+
+	// 记录唯一的生产者实例，避免重复关闭
+	shutdownProducers := make(map[rocketmq.Producer]bool)
+
+	for producerID, producerInfo := range s.producers {
+		if !shutdownProducers[producerInfo.Producer] {
+			log.Printf("🧹 Shutting down producer: ID=%s, Topic=%s, RefCount=%d",
+				producerID, producerInfo.Topic, producerInfo.RefCount)
+
+			if err := producerInfo.Producer.Shutdown(); err != nil {
+				log.Printf("⚠️ Error shutting down producer %s: %v", producerID, err)
+			}
+			shutdownProducers[producerInfo.Producer] = true
+		}
+	}
+
+	// 清空所有映射
+	s.producers = make(map[string]*ProducerInfo)
+	s.sharedProducers = make(map[ConnectionKey]string)
+
+	// 重置计数器
+	metrics.GlobalMetrics.ResetActiveProducers()
+
+	log.Printf("✅ All producers shutdown completed")
+}
+
+// ShutdownAllConsumers 优雅关闭所有消费者 - 用于服务停止时
+func (s *RocketMQProxyService) ShutdownAllConsumers() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	log.Printf("🛑 Shutting down all consumers...")
+
+	for consumerID, consumerInfo := range s.consumers {
+		log.Printf("🧹 Shutting down consumer: ID=%s, Group=%s, Topic=%s",
+			consumerID, consumerInfo.GroupID, consumerInfo.Topic)
+
+		// 取消消费者上下文
+		if consumerInfo.CancelFunc != nil {
+			consumerInfo.CancelFunc()
+		}
+
+		// 停止消费者
+		if err := consumerInfo.Consumer.Shutdown(); err != nil {
+			log.Printf("⚠️ Error shutting down consumer %s: %v", consumerID, err)
+		}
+
+		// 关闭消息通道
+		if consumerInfo.MessageChan != nil {
+			close(consumerInfo.MessageChan)
+		}
+	}
+
+	// 清空所有映射
+	s.consumers = make(map[string]*ConsumerInfo)
+
+	// 重置计数器
+	metrics.GlobalMetrics.ResetActiveConsumers()
+
+	log.Printf("✅ All consumers shutdown completed")
+}
+
+// ValidateAndFixProducerRefCounts 验证并修复生产者引用计数不一致问题
+func (s *RocketMQProxyService) ValidateAndFixProducerRefCounts() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	log.Printf("🔍 Validating producer reference counts...")
+
+	// 统计每个生产者实例的实际引用数
+	actualRefCounts := make(map[rocketmq.Producer]int)
+
+	for _, producerInfo := range s.producers {
+		actualRefCounts[producerInfo.Producer]++
+	}
+
+	// 检查并修复引用计数不一致
+	fixedCount := 0
+	for _, producerInfo := range s.producers {
+		expectedCount := actualRefCounts[producerInfo.Producer]
+		if producerInfo.RefCount != expectedCount {
+			log.Printf("⚠️ Reference count mismatch detected: Producer has RefCount=%d, but actual references=%d. Fixing...",
+				producerInfo.RefCount, expectedCount)
+			producerInfo.RefCount = expectedCount
+			fixedCount++
+		}
+	}
+
+	if fixedCount > 0 {
+		log.Printf("🔧 Fixed %d producer reference count mismatches", fixedCount)
+	} else {
+		log.Printf("✅ All producer reference counts are consistent")
+	}
 }
