@@ -99,27 +99,94 @@ const config = {
     grpcEndpoint: 'localhost:50051'
 };
 
-async function sendMessage() {
+async function producerDemo() {
     const client = new MQClient(config);
-    
-    // 获取生产者
     const topic = 'test';
     const producer = await client.getProducer(config.instanceId, topic);
-    
-    // 构建消息
-    const message = {
-        content: `测试消息${Date.now()}`,
-        timestamp: Date.now(),
+
+    // 1. 发送普通消息
+    console.log('📤 发送普通消息...');
+    const orderData = {
+        orderId: 'ORDER_' + Date.now(),
+        userId: 'user123',
+        amount: 99.99,
+        status: 'created'
     };
 
-    // 设置消息属性
-    let msgProps = new MessageProperties();
-    msgProps.putProperty("a", 1);
-    msgProps.messageKey(Date.now());
-    
-    // 发送消息
-    const result = await producer.publishMessage(message, 'test', msgProps);
-    console.log('消息发送成功:', result);
+    let msgProps = new MessageProperties()
+        .putProperty("orderId", orderData.orderId)
+        .putProperty("userId", orderData.userId)
+        .messageKey(orderData.orderId);
+
+    const result1 = await producer.publishMessage(orderData, 'order', msgProps);
+    console.log('✅ 普通消息发送成功:', result1.messageId);
+
+    // 2. 发送顺序消息（同一用户的订单保证顺序）
+    console.log('📊 发送顺序消息...');
+    const orderUpdateData = {
+        orderId: orderData.orderId,
+        userId: orderData.userId,
+        status: 'paid',
+        timestamp: Date.now()
+    };
+
+    msgProps = new MessageProperties()
+        .putProperty("orderId", orderUpdateData.orderId)
+        .putProperty("action", "statusUpdate")
+        .messageKey(orderUpdateData.orderId);
+
+    const result2 = await producer.publishOrderedMessage(
+        orderUpdateData,
+        'order-update',
+        msgProps,
+        orderData.userId  // 使用userId作为分区键保证同一用户订单顺序
+    );
+    console.log('✅ 顺序消息发送成功:', result2.messageId);
+
+    // 3. 发送延迟消息（字节云任意精度延迟）
+    console.log('⏰ 发送延迟消息...');
+    const timeoutCheckData = {
+        orderId: orderData.orderId,
+        action: 'timeout-check',
+        createTime: Date.now()
+    };
+
+    msgProps = new MessageProperties()
+        .putProperty("orderId", timeoutCheckData.orderId)
+        .putProperty("action", "timeoutCheck")
+        .messageKey(`timeout_${timeoutCheckData.orderId}`);
+
+    // 60秒后投递
+    const deliverTime = Date.now() + 60 * 1000;
+    const result3 = await producer.publishDelayMessage(
+        timeoutCheckData,
+        'timeout-check',
+        msgProps,
+        { startDeliverTime: deliverTime }  // 精确时间戳（毫秒）
+    );
+    console.log('✅ 延迟消息发送成功:', result3.messageId);
+
+    // 4. 发送事务消息
+    console.log('🔄 发送事务消息...');
+    const transData = {
+        orderId: orderData.orderId,
+        action: 'payment',
+        amount: orderData.amount
+    };
+
+    msgProps = new MessageProperties()
+        .putProperty("orderId", transData.orderId)
+        .putProperty("transactionType", "payment")
+        .messageKey(`trans_${transData.orderId}`);
+
+    const result4 = await producer.publishTransactionMessage(
+        transData,
+        'transaction',
+        msgProps,
+        30  // 事务回查免疫时间30秒
+    );
+    console.log('✅ 事务消息发送成功:', result4.messageId);
+    console.log('📋 事务ID:', result4.transactionId);
 }
 ```
 
@@ -188,10 +255,30 @@ props.transCheckImmunityTime(seconds); // 事务回查免疫时间
 
 #### 方法
 
-- `publishMessage(message, tag, properties)` - 发送消息
+- `publishMessage(message, tag, properties)` - 发送普通消息
   - `message`: 消息内容(对象或字符串)
   - `tag`: 消息标签
   - `properties`: MessageProperties实例
+
+- `publishOrderedMessage(message, tag, properties, shardingKey)` - 发送顺序消息
+  - `message`: 消息内容(对象或字符串)
+  - `tag`: 消息标签  
+  - `properties`: MessageProperties实例
+  - `shardingKey`: 分区键，相同分区键的消息保证顺序
+
+- `publishDelayMessage(message, tag, properties, options)` - 发送延迟消息
+  - `message`: 消息内容(对象或字符串)
+  - `tag`: 消息标签
+  - `properties`: MessageProperties实例
+  - `options`: 延迟选项
+    - `startDeliverTime`: 精确投递时间戳(毫秒)，字节云任意精度延迟
+    - `delayTimeLevel`: 延迟等级1-18，传统延迟方式
+
+- `publishTransactionMessage(message, tag, properties, transCheckImmunityTime)` - 发送事务消息
+  - `message`: 消息内容(对象或字符串)
+  - `tag`: 消息标签
+  - `properties`: MessageProperties实例
+  - `transCheckImmunityTime`: 事务回查免疫时间(秒)
 
 ### Consumer
 
@@ -249,16 +336,30 @@ node test.js consumer
 
 ### 生产环境部署
 
-1. **Go服务部署**
+1. **Docker部署**
+   ```bash
+   # 构建Docker镜像
+   docker build --platform linux/amd64 -t go-rocketmq-grpc-proxy:1.0.0 .
+   
+   # 运行容器
+   docker run -d \
+     --name rocketmq-proxy \
+     -p 50051:50051 \
+     -p 8080:8080 \
+     -e ROCKETMQ_LOG_LEVEL=warn \
+     go-rocketmq-grpc-proxy:1.0.0
+   ```
+
+2. **Go服务部署**
    - 使用Docker容器化部署
    - 配置健康检查端点
    - 设置适当的资源限制
 
-2. **负载均衡**
+3. **负载均衡**
    - 可以部署多个Go代理实例
    - 使用gRPC负载均衡
 
-3. **监控告警**
+4. **监控告警**
    - 监控gRPC连接数
    - 监控消息发送/接收速率
    - 设置错误率告警
@@ -296,8 +397,5 @@ A: 支持所有RocketMQ 4.x的消息类型：
 - 事务消息
 
 ## 许可证
-
-#Docker打包命令
-docker build --platform linux/amd64 -t go-rocketmq-grpc-proxy:1.0.0 .
 
 MIT License 
