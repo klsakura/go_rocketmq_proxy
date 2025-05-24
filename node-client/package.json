@@ -1,0 +1,46 @@
+{
+    "name": "@gankao/rocketmq-grpc-sdk",
+    "version": "1.0.0",
+    "description": "Node.js client SDK for RocketMQ with gRPC proxy support",
+    "main": "index.js",
+    "types": "index.d.ts",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "example:producer": "node examples/usage-demo.js producer",
+        "example:consumer": "node examples/usage-demo.js consumer"
+    },
+    "dependencies": {
+        "@grpc/grpc-js": "^1.9.0",
+        "@grpc/proto-loader": "^0.7.8"
+    },
+    "keywords": [
+        "rocketmq",
+        "grpc",
+        "nodejs",
+        "message-queue",
+        "bytedance",
+        "volcengine",
+        "sdk",
+        "client"
+    ],
+    "author": "gankao",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/gankao/rocketmq-grpc-sdk.git"
+    },
+    "homepage": "https://github.com/gankao/rocketmq-grpc-sdk#readme",
+    "bugs": {
+        "url": "https://github.com/gankao/rocketmq-grpc-sdk/issues"
+    },
+    "files": [
+        "index.js",
+        "index.d.ts",
+        "rocketmq.proto",
+        "examples/",
+        "README.md"
+    ],
+    "engines": {
+        "node": ">=14.0.0"
+    }
+}
