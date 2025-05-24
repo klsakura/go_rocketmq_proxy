@@ -1,6 +1,6 @@
 # RocketMQ gRPC Proxy
 
-这是一个Go语言实现的RocketMQ代理服务，通过gRPC协议为Node.js应用提供RocketMQ访问能力。解决了从阿里云RocketMQ HTTP SDK迁移到字节云RocketMQ TCP SDK的问题。
+这是一个Go语言实现的RocketMQ代理服务，通过gRPC协议为Node.js应用提供RocketMQ访问能力。
 
 ## 架构设计
 
