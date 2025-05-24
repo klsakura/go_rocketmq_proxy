@@ -47,37 +47,7 @@ make run
 
 服务将在 `:50051` 端口启动。
 
-### 2. RocketMQ日志配置
-
-**关于 "update offset to broker success" 日志**
-
-这些日志是**RocketMQ Go SDK的正常行为**，表示消费者进度管理机制正在工作：
-
-- **出现原因**: RocketMQ每5秒自动将消费者的offset同步到Broker
-- **是否正常**: ✅ 完全正常，这是RocketMQ的消费者进度管理机制
-- **日志内容**: 显示各个队列的offset更新成功状态
-
-如需减少这些日志，可以通过以下方式配置：
-
-```bash
-# 方法1: 环境变量
-export ROCKETMQ_LOG_LEVEL=warn
-
-# 方法2: 在performance.env中设置
-ROCKETMQ_LOG_LEVEL=warn
-
-# 方法3: Docker运行时设置
-docker run -e ROCKETMQ_LOG_LEVEL=error your-image
-```
-
-**日志级别说明**:
-- `debug`: 显示所有调试信息（包括offset更新）
-- `info`: 显示信息级别日志（包括offset更新）
-- `warn`: 只显示警告和错误（**推荐设置**）
-- `error`: 只显示错误信息
-- `fatal`: 只显示致命错误
-
-### 3. 消费者组连接管理 🔄
+### 2. 消费者组连接管理 🔄
 
 **新增功能：支持预定义消费者组的自动重连**
 
@@ -107,14 +77,14 @@ curl http://localhost:8080/metrics
 - 当客户端断开连接时，Go代理会自动检测并清理资源
 - 支持同一组名在旧连接断开后重新连接
 
-### 4. 安装Node.js客户端依赖
+### 3. 安装Node.js客户端依赖
 
 ```bash
 cd nodejs-client
 npm install
 ```
 
-### 5. 使用Node.js客户端
+### 4. 使用Node.js客户端
 
 #### 生产者示例
 
