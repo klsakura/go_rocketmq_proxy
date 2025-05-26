@@ -496,19 +496,11 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 			if timeSinceLastActive < 5*time.Minute {
 				// 消费者仍然活跃，复用现有消费者
 				newConsumerID := uuid.New().String()
-				s.consumers[newConsumerID] = &ConsumerInfo{
-					Consumer:    consumerInfo.Consumer,
-					Topic:       consumerInfo.Topic,
-					GroupID:     consumerInfo.GroupID,
-					Endpoint:    consumerInfo.Endpoint,
-					InstanceId:  consumerInfo.InstanceId,
-					MessageChan: consumerInfo.MessageChan,
-					CancelFunc:  consumerInfo.CancelFunc,
-					LastActive:  time.Now(),
-					RefCount:    consumerInfo.RefCount + 1,
-					CreatedAt:   consumerInfo.CreatedAt,
-				}
+
+				// 直接引用同一个ConsumerInfo实例，而不是创建新的
+				s.consumers[newConsumerID] = consumerInfo
 				consumerInfo.RefCount++
+				consumerInfo.LastActive = time.Now()
 
 				log.Printf("✅ Reusing consumer: ID=%s, Group=%s, Topic=%s, RefCount=%d",
 					newConsumerID, req.GroupId, req.Topic, consumerInfo.RefCount)
@@ -644,7 +636,7 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 	}
 
 	// 存储消费者信息
-	s.consumers[consumerID] = &ConsumerInfo{
+	consumerInfo := &ConsumerInfo{
 		Consumer:    c,
 		Topic:       req.Topic,
 		GroupID:     consumerGroup,
@@ -656,6 +648,8 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 		RefCount:    1,
 		CreatedAt:   time.Now(),
 	}
+
+	s.consumers[consumerID] = consumerInfo
 
 	// 记录复用映射
 	s.sharedConsumers[consumerKey] = consumerID
@@ -977,8 +971,19 @@ func (s *RocketMQProxyService) cleanupConsumerInternal(consumerID string) error 
 		close(consumerInfo.MessageChan)
 	}
 
-	// 从映射中删除
-	delete(s.consumers, consumerID)
+	// 找到所有指向同一个ConsumerInfo实例的ID并清理
+	var idsToDelete []string
+	for id, info := range s.consumers {
+		if info == consumerInfo {
+			idsToDelete = append(idsToDelete, id)
+		}
+	}
+
+	// 删除所有相关的消费者ID
+	for _, id := range idsToDelete {
+		delete(s.consumers, id)
+		log.Printf("🧹 Removed consumer ID: %s", id)
+	}
 
 	// 清理共享映射 - 删除所有指向该consumerID的映射
 	keysToDelete := make([]ConsumerKey, 0)
@@ -994,7 +999,7 @@ func (s *RocketMQProxyService) cleanupConsumerInternal(consumerID string) error 
 	// 减少消费者计数
 	metrics.GlobalMetrics.DecActiveConsumers()
 
-	log.Printf("✅ Consumer cleanup completed: %s", consumerID)
+	log.Printf("✅ Consumer cleanup completed: %s (cleaned %d IDs)", consumerID, len(idsToDelete))
 	return nil
 }
 
