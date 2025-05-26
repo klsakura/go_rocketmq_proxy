@@ -458,45 +458,43 @@ func (s *RocketMQProxyService) SendTransactionMessage(ctx context.Context, req *
 	}, nil
 }
 
-// CreateConsumer 创建消费者
+// CreateConsumer 创建消费者 - 支持集群消费模式
 func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.CreateConsumerRequest) (*proto.CreateConsumerResponse, error) {
-	log.Printf("Creating consumer for topic: %s, group: %s", req.Topic, req.GroupId)
+	log.Printf("Creating consumer for topic: %s, group: %s (cluster mode supported)", req.Topic, req.GroupId)
 
-	// 检查是否已有相同组名的消费者
+	// 在集群消费模式下，允许多个消费者使用相同的组名
+	// 只需要清理真正不活跃的消费者（超过5分钟未活跃）
 	s.mu.Lock()
+	var inactiveConsumers []string
 	for consumerID, existingConsumer := range s.consumers {
 		if existingConsumer.GroupID == req.GroupId && existingConsumer.Topic == req.Topic {
-			// 检查现有消费者是否还活跃
 			timeSinceLastActive := time.Since(existingConsumer.LastActive)
 
-			if timeSinceLastActive > 30*time.Second {
-				// 超过30秒未活跃，强制清理旧的消费者
-				log.Printf("🔄 Found inactive consumer with same group name, replacing: %s (inactive for %v)", consumerID, timeSinceLastActive)
-				s.mu.Unlock() // 释放锁后清理
-				if err := s.CleanupConsumerByID(consumerID); err != nil {
-					log.Printf("⚠️ Error cleaning up existing consumer: %v", err)
-				}
-				s.mu.Lock() // 重新获取锁
-				break       // 跳出循环，继续创建新的消费者
+			// 只清理超过5分钟未活跃的消费者，允许正常的集群消费
+			if timeSinceLastActive > 5*time.Minute {
+				inactiveConsumers = append(inactiveConsumers, consumerID)
+				log.Printf("🔄 Found long-inactive consumer, will clean up: %s (inactive for %v)", consumerID, timeSinceLastActive)
 			} else {
-				// 消费者仍然活跃，拒绝创建
-				s.mu.Unlock()
-				return &proto.CreateConsumerResponse{
-					Success: false,
-					Message: fmt.Sprintf("Consumer group '%s' for topic '%s' is still active (last active: %v ago). Please wait or use a different group name.", req.GroupId, req.Topic, timeSinceLastActive.Truncate(time.Second)),
-				}, nil
+				log.Printf("✅ Found active consumer in same group (cluster mode): %s (last active: %v ago)", consumerID, timeSinceLastActive.Truncate(time.Second))
 			}
 		}
 	}
 	s.mu.Unlock()
 
-	// 直接使用用户指定的组名（支持预定义组名）
+	// 清理真正不活跃的消费者
+	for _, consumerID := range inactiveConsumers {
+		if err := s.CleanupConsumerByID(consumerID); err != nil {
+			log.Printf("⚠️ Error cleaning up inactive consumer: %v", err)
+		}
+	}
+
+	// 直接使用用户指定的组名（支持预定义组名和集群消费）
 	consumerGroup := req.GroupId
 
 	// 创建带取消功能的上下文
 	consumerCtx, cancelFunc := context.WithCancel(context.Background())
 
-	// 创建消费者配置 - 按照官方示例
+	// 创建消费者配置 - 明确启用集群消费模式
 	opts := []consumer.Option{
 		// 使用官方推荐的NameServer配置方式
 		consumer.WithNsResolver(primitive.NewPassthroughResolver([]string{req.Endpoint})),
@@ -506,6 +504,8 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 		}),
 		consumer.WithGroupName(consumerGroup),
 		consumer.WithConsumeFromWhere(consumer.ConsumeFromLastOffset),
+		// 明确设置为集群消费模式（这是默认值，但明确设置以确保）
+		consumer.WithConsumerModel(consumer.Clustering),
 		// 配置拉取参数以减少超时警告
 		consumer.WithConsumerPullTimeout(s.config.PullTimeout), // 使用配置的拉取超时时间
 		consumer.WithPullInterval(s.config.PullInterval),       // 使用配置的拉取间隔
@@ -605,15 +605,24 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 		CancelFunc:  cancelFunc,
 		LastActive:  time.Now(),
 	}
+
+	// 统计同组消费者数量
+	sameGroupCount := 0
+	for _, consumer := range s.consumers {
+		if consumer.GroupID == consumerGroup && consumer.Topic == req.Topic {
+			sameGroupCount++
+		}
+	}
 	s.mu.Unlock()
 
 	// 增加消费者计数
 	metrics.GlobalMetrics.IncActiveConsumers()
 
-	log.Printf("✅ Consumer created successfully: ID=%s, Group=%s (supports predefined groups)", consumerID, consumerGroup)
+	log.Printf("✅ Consumer created successfully: ID=%s, Group=%s, Topic=%s (cluster mode: %d consumers in group)",
+		consumerID, consumerGroup, req.Topic, sameGroupCount)
 	return &proto.CreateConsumerResponse{
 		Success:    true,
-		Message:    fmt.Sprintf("Consumer created successfully for predefined group: %s", consumerGroup),
+		Message:    fmt.Sprintf("Consumer created successfully for group: %s (cluster mode: %d consumers)", consumerGroup, sameGroupCount),
 		ConsumerId: consumerID,
 	}, nil
 }

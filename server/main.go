@@ -90,7 +90,7 @@ func main() {
 	log.Printf("   - Set MAX_CONCURRENT=%d for max concurrent connections", cfg.MaxConcurrent)
 	log.Printf("   - Set WORKER_POOL_SIZE=%d for worker goroutines", cfg.WorkerPoolSize)
 	log.Printf("   - Set MESSAGE_BUFFER_SIZE=%d for message buffering", cfg.MessageBufferSize)
-	log.Printf("🧹 Consumer cleanup enabled: inactive consumers will be cleaned up after 1 minute")
+	log.Printf("🧹 Consumer cleanup enabled: inactive consumers will be cleaned up after 10 minutes")
 	log.Printf("🔄 Supports predefined consumer groups from 字节云 with auto-reconnection")
 
 	// 添加信号处理机制，在服务停止时优雅关闭所有生产者和消费者
@@ -182,14 +182,14 @@ func startResourceMonitor() {
 
 // startConsumerCleanupTask 启动消费者清理定时任务
 func startConsumerCleanupTask(rocketmqService *service.RocketMQProxyService) {
-	ticker := time.NewTicker(30 * time.Second) // 更频繁的清理检查：30秒
+	ticker := time.NewTicker(2 * time.Minute) // 清理检查间隔：2分钟
 	defer ticker.Stop()
 
-	log.Printf("🧹 Starting consumer cleanup task (check interval: 30s, timeout: 1 minute)")
+	log.Printf("🧹 Starting consumer cleanup task (check interval: 2 minutes, timeout: 10 minutes) - supports cluster mode")
 
 	for range ticker.C {
-		// 清理超过1分钟未活跃的消费者（更快的清理）
-		rocketmqService.CleanupInactiveConsumers(1 * time.Minute)
+		// 清理超过10分钟未活跃的消费者（支持集群消费模式，更长的超时时间）
+		rocketmqService.CleanupInactiveConsumers(10 * time.Minute)
 	}
 }
 
