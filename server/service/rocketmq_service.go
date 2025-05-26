@@ -41,6 +41,8 @@ type ConsumerInfo struct {
 	MessageChan chan *proto.Message
 	CancelFunc  context.CancelFunc // 用于取消消费者上下文
 	LastActive  time.Time          // 最后活跃时间
+	RefCount    int                // 引用计数，支持复用
+	CreatedAt   time.Time          // 创建时间
 }
 
 // ConnectionKey 连接唯一标识
@@ -51,12 +53,22 @@ type ConnectionKey struct {
 	Topic       string
 }
 
+// ConsumerKey 消费者连接唯一标识
+type ConsumerKey struct {
+	Endpoint    string
+	AccessKeyId string
+	InstanceId  string
+	Topic       string
+	GroupID     string
+}
+
 // RocketMQProxyService gRPC服务实现
 type RocketMQProxyService struct {
 	proto.UnimplementedRocketMQProxyServer
 	producers       map[string]*ProducerInfo // producer_id -> ProducerInfo
 	consumers       map[string]*ConsumerInfo // consumer_id -> ConsumerInfo
 	sharedProducers map[ConnectionKey]string // 连接配置 -> producer_id (支持多实例)
+	sharedConsumers map[ConsumerKey]string   // 消费者配置 -> consumer_id (支持复用)
 	mu              sync.RWMutex
 	config          *config.ServerConfig // 服务配置
 }
@@ -67,6 +79,7 @@ func NewRocketMQProxyService(cfg *config.ServerConfig) *RocketMQProxyService {
 		producers:       make(map[string]*ProducerInfo),
 		consumers:       make(map[string]*ConsumerInfo),
 		sharedProducers: make(map[ConnectionKey]string),
+		sharedConsumers: make(map[ConsumerKey]string),
 		config:          cfg,
 	}
 }
@@ -458,37 +471,82 @@ func (s *RocketMQProxyService) SendTransactionMessage(ctx context.Context, req *
 	}, nil
 }
 
-// CreateConsumer 创建消费者 - 支持集群消费模式
+// CreateConsumer 创建消费者 - 支持集群消费模式和消费者复用
 func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.CreateConsumerRequest) (*proto.CreateConsumerResponse, error) {
-	log.Printf("Creating consumer for topic: %s, group: %s (cluster mode supported)", req.Topic, req.GroupId)
+	log.Printf("Creating consumer for topic: %s, group: %s (cluster mode with consumer reuse)", req.Topic, req.GroupId)
 
-	// 在集群消费模式下，允许多个消费者使用相同的组名
-	// 只需要清理真正不活跃的消费者（超过5分钟未活跃）
+	// 生成消费者连接key，用于复用检查
+	consumerKey := ConsumerKey{
+		Endpoint:    req.Endpoint,
+		AccessKeyId: req.AccessKeyId,
+		InstanceId:  req.InstanceId,
+		Topic:       req.Topic,
+		GroupID:     req.GroupId,
+	}
+
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 检查是否已有相同配置的消费者可以复用
+	if existingConsumerID, exists := s.sharedConsumers[consumerKey]; exists {
+		if consumerInfo, found := s.consumers[existingConsumerID]; found {
+			// 检查现有消费者是否还活跃
+			timeSinceLastActive := time.Since(consumerInfo.LastActive)
+
+			if timeSinceLastActive < 5*time.Minute {
+				// 消费者仍然活跃，复用现有消费者
+				newConsumerID := uuid.New().String()
+				s.consumers[newConsumerID] = &ConsumerInfo{
+					Consumer:    consumerInfo.Consumer,
+					Topic:       consumerInfo.Topic,
+					GroupID:     consumerInfo.GroupID,
+					Endpoint:    consumerInfo.Endpoint,
+					InstanceId:  consumerInfo.InstanceId,
+					MessageChan: consumerInfo.MessageChan,
+					CancelFunc:  consumerInfo.CancelFunc,
+					LastActive:  time.Now(),
+					RefCount:    consumerInfo.RefCount + 1,
+					CreatedAt:   consumerInfo.CreatedAt,
+				}
+				consumerInfo.RefCount++
+
+				log.Printf("✅ Reusing consumer: ID=%s, Group=%s, Topic=%s, RefCount=%d",
+					newConsumerID, req.GroupId, req.Topic, consumerInfo.RefCount)
+				return &proto.CreateConsumerResponse{
+					Success:    true,
+					Message:    fmt.Sprintf("Consumer reused (ref: %d) - cluster mode", consumerInfo.RefCount),
+					ConsumerId: newConsumerID,
+				}, nil
+			} else {
+				// 消费者不活跃，清理后重新创建
+				log.Printf("🔄 Found inactive shared consumer, will recreate: %s (inactive for %v)", existingConsumerID, timeSinceLastActive)
+				s.cleanupSharedConsumerInternal(consumerKey, existingConsumerID)
+			}
+		}
+	}
+
+	// 清理其他不活跃的消费者（但不影响当前创建）
 	var inactiveConsumers []string
 	for consumerID, existingConsumer := range s.consumers {
 		if existingConsumer.GroupID == req.GroupId && existingConsumer.Topic == req.Topic {
 			timeSinceLastActive := time.Since(existingConsumer.LastActive)
-
-			// 只清理超过5分钟未活跃的消费者，允许正常的集群消费
 			if timeSinceLastActive > 5*time.Minute {
 				inactiveConsumers = append(inactiveConsumers, consumerID)
 				log.Printf("🔄 Found long-inactive consumer, will clean up: %s (inactive for %v)", consumerID, timeSinceLastActive)
-			} else {
-				log.Printf("✅ Found active consumer in same group (cluster mode): %s (last active: %v ago)", consumerID, timeSinceLastActive.Truncate(time.Second))
 			}
 		}
 	}
-	s.mu.Unlock()
 
-	// 清理真正不活跃的消费者
+	// 释放锁后清理不活跃的消费者
+	s.mu.Unlock()
 	for _, consumerID := range inactiveConsumers {
 		if err := s.CleanupConsumerByID(consumerID); err != nil {
 			log.Printf("⚠️ Error cleaning up inactive consumer: %v", err)
 		}
 	}
+	s.mu.Lock()
 
-	// 直接使用用户指定的组名（支持预定义组名和集群消费）
+	// 创建新的消费者
 	consumerGroup := req.GroupId
 
 	// 创建带取消功能的上下文
@@ -496,7 +554,6 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 
 	// 创建消费者配置 - 明确启用集群消费模式
 	opts := []consumer.Option{
-		// 使用官方推荐的NameServer配置方式
 		consumer.WithNsResolver(primitive.NewPassthroughResolver([]string{req.Endpoint})),
 		consumer.WithCredentials(primitive.Credentials{
 			AccessKey: req.AccessKeyId,
@@ -504,19 +561,17 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 		}),
 		consumer.WithGroupName(consumerGroup),
 		consumer.WithConsumeFromWhere(consumer.ConsumeFromLastOffset),
-		// 明确设置为集群消费模式（这是默认值，但明确设置以确保）
 		consumer.WithConsumerModel(consumer.Clustering),
-		// 配置拉取参数以减少超时警告
-		consumer.WithConsumerPullTimeout(s.config.PullTimeout), // 使用配置的拉取超时时间
-		consumer.WithPullInterval(s.config.PullInterval),       // 使用配置的拉取间隔
-		consumer.WithMaxReconsumeTimes(3),                      // 最大重试次数
-		consumer.WithConsumeMessageBatchMaxSize(32),            // 批量消费大小
+		consumer.WithConsumerPullTimeout(s.config.PullTimeout),
+		consumer.WithPullInterval(s.config.PullInterval),
+		consumer.WithMaxReconsumeTimes(3),
+		consumer.WithConsumeMessageBatchMaxSize(32),
 	}
 
 	// 创建消费者
 	c, err := rocketmq.NewPushConsumer(opts...)
 	if err != nil {
-		cancelFunc() // 清理上下文
+		cancelFunc()
 		return &proto.CreateConsumerResponse{
 			Success: false,
 			Message: fmt.Sprintf("Failed to create consumer: %v", err),
@@ -536,16 +591,13 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 	}
 
 	err = c.Subscribe(req.Topic, selector, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
-		// 检查上下文是否已取消
 		select {
 		case <-consumerCtx.Done():
 			return consumer.ConsumeRetryLater, fmt.Errorf("consumer context cancelled")
 		default:
 		}
 
-		// 将消息发送到通道
 		for _, msg := range msgs {
-			// 增加接收消息计数
 			metrics.GlobalMetrics.IncMessagesReceived()
 
 			protoMsg := &proto.Message{
@@ -558,7 +610,6 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 				ReconsumeTimes: int32(msg.ReconsumeTimes),
 			}
 
-			// 使用带超时的发送，避免消息丢失
 			select {
 			case messageChan <- protoMsg:
 				log.Printf("Message sent to channel: %s", msg.MsgId)
@@ -567,7 +618,6 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 				return consumer.ConsumeRetryLater, fmt.Errorf("consumer context cancelled")
 			case <-time.After(5 * time.Second):
 				log.Printf("⚠️ Message channel send timeout, will retry later: %s", msg.MsgId)
-				// 增加channel满事件计数
 				metrics.GlobalMetrics.IncChannelFullEvents()
 				return consumer.ConsumeRetryLater, fmt.Errorf("message channel timeout - will retry")
 			}
@@ -576,7 +626,7 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 	})
 
 	if err != nil {
-		cancelFunc() // 清理上下文
+		cancelFunc()
 		return &proto.CreateConsumerResponse{
 			Success: false,
 			Message: fmt.Sprintf("Failed to subscribe topic: %v", err),
@@ -586,7 +636,7 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 	// 启动消费者
 	err = c.Start()
 	if err != nil {
-		cancelFunc() // 清理上下文
+		cancelFunc()
 		return &proto.CreateConsumerResponse{
 			Success: false,
 			Message: fmt.Sprintf("Failed to start consumer: %v", err),
@@ -594,7 +644,6 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 	}
 
 	// 存储消费者信息
-	s.mu.Lock()
 	s.consumers[consumerID] = &ConsumerInfo{
 		Consumer:    c,
 		Topic:       req.Topic,
@@ -604,7 +653,12 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 		MessageChan: messageChan,
 		CancelFunc:  cancelFunc,
 		LastActive:  time.Now(),
+		RefCount:    1,
+		CreatedAt:   time.Now(),
 	}
+
+	// 记录复用映射
+	s.sharedConsumers[consumerKey] = consumerID
 
 	// 统计同组消费者数量
 	sameGroupCount := 0
@@ -613,12 +667,11 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 			sameGroupCount++
 		}
 	}
-	s.mu.Unlock()
 
 	// 增加消费者计数
 	metrics.GlobalMetrics.IncActiveConsumers()
 
-	log.Printf("✅ Consumer created successfully: ID=%s, Group=%s, Topic=%s (cluster mode: %d consumers in group)",
+	log.Printf("✅ New consumer created: ID=%s, Group=%s, Topic=%s (cluster mode: %d consumers in group)",
 		consumerID, consumerGroup, req.Topic, sameGroupCount)
 	return &proto.CreateConsumerResponse{
 		Success:    true,
@@ -885,7 +938,7 @@ func (s *RocketMQProxyService) CleanupConsumerByID(consumerID string) error {
 	return s.cleanupConsumerInternal(consumerID)
 }
 
-// cleanupConsumerInternal 内部清理方法（不管理锁，供内部调用）
+// cleanupConsumerInternal 内部清理方法（支持引用计数）
 func (s *RocketMQProxyService) cleanupConsumerInternal(consumerID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -895,9 +948,20 @@ func (s *RocketMQProxyService) cleanupConsumerInternal(consumerID string) error 
 		return fmt.Errorf("consumer not found: %s", consumerID)
 	}
 
-	log.Printf("🧹 Cleaning up consumer: ID=%s, Group=%s, Topic=%s",
-		consumerID, consumerInfo.GroupID, consumerInfo.Topic)
+	log.Printf("🧹 Cleaning up consumer: ID=%s, Group=%s, Topic=%s, RefCount=%d",
+		consumerID, consumerInfo.GroupID, consumerInfo.Topic, consumerInfo.RefCount)
 
+	// 减少引用计数
+	consumerInfo.RefCount--
+
+	// 如果引用计数大于0，只是移除当前ID，但保持消费者实例
+	if consumerInfo.RefCount > 0 {
+		delete(s.consumers, consumerID)
+		log.Printf("✅ Consumer instance preserved with RefCount=%d", consumerInfo.RefCount)
+		return nil
+	}
+
+	// 引用计数为0，真正清理资源
 	// 取消消费者上下文
 	if consumerInfo.CancelFunc != nil {
 		consumerInfo.CancelFunc()
@@ -909,10 +973,23 @@ func (s *RocketMQProxyService) cleanupConsumerInternal(consumerID string) error 
 	}
 
 	// 关闭消息通道
-	close(consumerInfo.MessageChan)
+	if consumerInfo.MessageChan != nil {
+		close(consumerInfo.MessageChan)
+	}
 
-	// 从map中移除
+	// 从映射中删除
 	delete(s.consumers, consumerID)
+
+	// 清理共享映射 - 删除所有指向该consumerID的映射
+	keysToDelete := make([]ConsumerKey, 0)
+	for key, id := range s.sharedConsumers {
+		if id == consumerID {
+			keysToDelete = append(keysToDelete, key)
+		}
+	}
+	for _, key := range keysToDelete {
+		delete(s.sharedConsumers, key)
+	}
 
 	// 减少消费者计数
 	metrics.GlobalMetrics.DecActiveConsumers()
@@ -1077,28 +1154,36 @@ func (s *RocketMQProxyService) ShutdownAllConsumers() {
 
 	log.Printf("🛑 Shutting down all consumers...")
 
+	// 记录唯一的消费者实例，避免重复关闭
+	shutdownConsumers := make(map[rocketmq.PushConsumer]bool)
+
 	for consumerID, consumerInfo := range s.consumers {
-		log.Printf("🧹 Shutting down consumer: ID=%s, Group=%s, Topic=%s",
-			consumerID, consumerInfo.GroupID, consumerInfo.Topic)
+		if !shutdownConsumers[consumerInfo.Consumer] {
+			log.Printf("🧹 Shutting down consumer: ID=%s, Group=%s, Topic=%s, RefCount=%d",
+				consumerID, consumerInfo.GroupID, consumerInfo.Topic, consumerInfo.RefCount)
 
-		// 取消消费者上下文
-		if consumerInfo.CancelFunc != nil {
-			consumerInfo.CancelFunc()
-		}
+			// 取消消费者上下文
+			if consumerInfo.CancelFunc != nil {
+				consumerInfo.CancelFunc()
+			}
 
-		// 停止消费者
-		if err := consumerInfo.Consumer.Shutdown(); err != nil {
-			log.Printf("⚠️ Error shutting down consumer %s: %v", consumerID, err)
-		}
+			// 停止消费者
+			if err := consumerInfo.Consumer.Shutdown(); err != nil {
+				log.Printf("⚠️ Error shutting down consumer %s: %v", consumerID, err)
+			}
 
-		// 关闭消息通道
-		if consumerInfo.MessageChan != nil {
-			close(consumerInfo.MessageChan)
+			// 关闭消息通道
+			if consumerInfo.MessageChan != nil {
+				close(consumerInfo.MessageChan)
+			}
+
+			shutdownConsumers[consumerInfo.Consumer] = true
 		}
 	}
 
 	// 清空所有映射
 	s.consumers = make(map[string]*ConsumerInfo)
+	s.sharedConsumers = make(map[ConsumerKey]string)
 
 	// 重置计数器
 	metrics.GlobalMetrics.ResetActiveConsumers()
@@ -1136,5 +1221,38 @@ func (s *RocketMQProxyService) ValidateAndFixProducerRefCounts() {
 		log.Printf("🔧 Fixed %d producer reference count mismatches", fixedCount)
 	} else {
 		log.Printf("✅ All producer reference counts are consistent")
+	}
+}
+
+// cleanupSharedConsumerInternal 清理共享消费者映射
+func (s *RocketMQProxyService) cleanupSharedConsumerInternal(consumerKey ConsumerKey, consumerID string) {
+	// 从共享映射中删除
+	delete(s.sharedConsumers, consumerKey)
+
+	// 如果消费者还存在，也清理掉
+	if consumerInfo, exists := s.consumers[consumerID]; exists {
+		log.Printf("🧹 Cleaning up shared consumer: ID=%s, Group=%s, Topic=%s",
+			consumerID, consumerInfo.GroupID, consumerInfo.Topic)
+
+		// 取消消费者上下文
+		if consumerInfo.CancelFunc != nil {
+			consumerInfo.CancelFunc()
+		}
+
+		// 停止消费者
+		if err := consumerInfo.Consumer.Shutdown(); err != nil {
+			log.Printf("⚠️ Error shutting down shared consumer %s: %v", consumerID, err)
+		}
+
+		// 关闭消息通道
+		if consumerInfo.MessageChan != nil {
+			close(consumerInfo.MessageChan)
+		}
+
+		// 从map中移除
+		delete(s.consumers, consumerID)
+
+		// 减少消费者计数
+		metrics.GlobalMetrics.DecActiveConsumers()
 	}
 }
