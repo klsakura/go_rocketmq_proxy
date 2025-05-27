@@ -53,12 +53,12 @@ type ConnectionKey struct {
 	Topic       string
 }
 
-// ConsumerKey 消费者连接唯一标识 - 修改为只按GroupID复用
+// ConsumerKey 消费者连接唯一标识 - 支持不同RocketMQ实例
 type ConsumerKey struct {
 	Endpoint    string
 	AccessKeyId string
 	InstanceId  string
-	GroupID     string // 移除Topic字段，只按GroupID复用
+	GroupID     string // 按GroupID+Endpoint复用，支持不同RocketMQ实例
 }
 
 // RocketMQProxyService gRPC服务实现
@@ -474,12 +474,12 @@ func (s *RocketMQProxyService) SendTransactionMessage(ctx context.Context, req *
 func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.CreateConsumerRequest) (*proto.CreateConsumerResponse, error) {
 	log.Printf("Creating consumer for topic: %s, group: %s (cluster mode with consumer reuse)", req.Topic, req.GroupId)
 
-	// 生成消费者连接key，只按GroupID复用，支持多Topic订阅
+	// 生成消费者连接key，按GroupID+Endpoint复用，支持多Topic订阅和不同RocketMQ实例
 	consumerKey := ConsumerKey{
 		Endpoint:    req.Endpoint,
 		AccessKeyId: req.AccessKeyId,
 		InstanceId:  req.InstanceId,
-		GroupID:     req.GroupId, // 移除Topic字段
+		GroupID:     req.GroupId,
 	}
 
 	s.mu.Lock()
