@@ -70,6 +70,7 @@ type RocketMQProxyService struct {
 	sharedConsumers map[ConsumerKey]string   // 消费者配置 -> consumer_id (支持复用)
 	mu              sync.RWMutex
 	config          *config.ServerConfig // 服务配置
+	globalEndpoint  string               // 全局Endpoint，防止连接不同的RocketMQ实例
 }
 
 // NewRocketMQProxyService 创建新的服务实例
@@ -87,6 +88,20 @@ func NewRocketMQProxyService(cfg *config.ServerConfig) *RocketMQProxyService {
 func (s *RocketMQProxyService) CreateProducer(ctx context.Context, req *proto.CreateProducerRequest) (*proto.CreateProducerResponse, error) {
 	log.Printf("Creating producer for topic: %s, instance: %s, endpoint: %s", req.Topic, req.InstanceId, req.Endpoint)
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 检查Endpoint一致性 - RocketMQ Go SDK不支持同一进程连接不同的NameServer
+	if s.globalEndpoint == "" {
+		s.globalEndpoint = req.Endpoint
+		log.Printf("🌐 Setting global endpoint: %s", s.globalEndpoint)
+	} else if s.globalEndpoint != req.Endpoint {
+		return &proto.CreateProducerResponse{
+			Success: false,
+			Message: fmt.Sprintf("Cannot connect to different endpoint. Current: %s, Requested: %s. RocketMQ Go SDK limitation: one process can only connect to one NameServer cluster.", s.globalEndpoint, req.Endpoint),
+		}, nil
+	}
+
 	// 生成连接key，支持多个RocketMQ实例
 	connKey := ConnectionKey{
 		Endpoint:    req.Endpoint,
@@ -94,9 +109,6 @@ func (s *RocketMQProxyService) CreateProducer(ctx context.Context, req *proto.Cr
 		InstanceId:  req.InstanceId,
 		Topic:       req.Topic,
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	// 检查是否已有相同配置的生产者可以复用
 	if existingProducerID, exists := s.sharedProducers[connKey]; exists {
@@ -474,6 +486,20 @@ func (s *RocketMQProxyService) SendTransactionMessage(ctx context.Context, req *
 func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.CreateConsumerRequest) (*proto.CreateConsumerResponse, error) {
 	log.Printf("Creating consumer for topic: %s, group: %s (cluster mode with consumer reuse)", req.Topic, req.GroupId)
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 检查Endpoint一致性 - RocketMQ Go SDK不支持同一进程连接不同的NameServer
+	if s.globalEndpoint == "" {
+		s.globalEndpoint = req.Endpoint
+		log.Printf("🌐 Setting global endpoint: %s", s.globalEndpoint)
+	} else if s.globalEndpoint != req.Endpoint {
+		return &proto.CreateConsumerResponse{
+			Success: false,
+			Message: fmt.Sprintf("Cannot connect to different endpoint. Current: %s, Requested: %s. RocketMQ Go SDK limitation: one process can only connect to one NameServer cluster.", s.globalEndpoint, req.Endpoint),
+		}, nil
+	}
+
 	// 生成消费者连接key，按GroupID+Endpoint复用，支持多Topic订阅和不同RocketMQ实例
 	consumerKey := ConsumerKey{
 		Endpoint:    req.Endpoint,
@@ -481,9 +507,6 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 		InstanceId:  req.InstanceId,
 		GroupID:     req.GroupId,
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	// 检查是否已有相同GroupID的消费者可以复用
 	if existingConsumerID, exists := s.sharedConsumers[consumerKey]; exists {
