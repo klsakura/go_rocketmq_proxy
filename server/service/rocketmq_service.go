@@ -34,7 +34,7 @@ type ProducerInfo struct {
 // ConsumerInfo 消费者信息
 type ConsumerInfo struct {
 	Consumer    rocketmq.PushConsumer
-	Topic       string
+	Topics      map[string]bool // 改为支持多个Topic的映射
 	GroupID     string
 	Endpoint    string
 	InstanceId  string
@@ -53,13 +53,12 @@ type ConnectionKey struct {
 	Topic       string
 }
 
-// ConsumerKey 消费者连接唯一标识
+// ConsumerKey 消费者连接唯一标识 - 修改为只按GroupID复用
 type ConsumerKey struct {
 	Endpoint    string
 	AccessKeyId string
 	InstanceId  string
-	Topic       string
-	GroupID     string
+	GroupID     string // 移除Topic字段，只按GroupID复用
 }
 
 // RocketMQProxyService gRPC服务实现
@@ -471,29 +470,78 @@ func (s *RocketMQProxyService) SendTransactionMessage(ctx context.Context, req *
 	}, nil
 }
 
-// CreateConsumer 创建消费者 - 支持集群消费模式和消费者复用
+// CreateConsumer 创建消费者 - 支持集群消费模式和消费者复用，支持同一GroupID订阅多个Topic
 func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.CreateConsumerRequest) (*proto.CreateConsumerResponse, error) {
 	log.Printf("Creating consumer for topic: %s, group: %s (cluster mode with consumer reuse)", req.Topic, req.GroupId)
 
-	// 生成消费者连接key，用于复用检查
+	// 生成消费者连接key，只按GroupID复用，支持多Topic订阅
 	consumerKey := ConsumerKey{
 		Endpoint:    req.Endpoint,
 		AccessKeyId: req.AccessKeyId,
 		InstanceId:  req.InstanceId,
-		Topic:       req.Topic,
-		GroupID:     req.GroupId,
+		GroupID:     req.GroupId, // 移除Topic字段
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 检查是否已有相同配置的消费者可以复用
+	// 检查是否已有相同GroupID的消费者可以复用
 	if existingConsumerID, exists := s.sharedConsumers[consumerKey]; exists {
 		if consumerInfo, found := s.consumers[existingConsumerID]; found {
 			// 检查现有消费者是否还活跃
 			timeSinceLastActive := time.Since(consumerInfo.LastActive)
 
 			if timeSinceLastActive < 5*time.Minute {
+				// 检查是否已经订阅了这个Topic
+				if !consumerInfo.Topics[req.Topic] {
+					// 为现有消费者添加新Topic订阅
+					selector := consumer.MessageSelector{
+						Type:       consumer.TAG,
+						Expression: req.TagExpression,
+					}
+
+					err := consumerInfo.Consumer.Subscribe(req.Topic, selector, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+						select {
+						case <-ctx.Done():
+							return consumer.ConsumeRetryLater, fmt.Errorf("consumer context cancelled")
+						default:
+						}
+
+						for _, msg := range msgs {
+							metrics.GlobalMetrics.IncMessagesReceived()
+
+							protoMsg := &proto.Message{
+								MessageId:      msg.MsgId,
+								ReceiptHandle:  msg.MsgId,
+								MessageBody:    string(msg.Body),
+								Tag:            msg.GetTags(),
+								Properties:     msg.GetProperties(),
+								BornTimestamp:  msg.BornTimestamp,
+								ReconsumeTimes: int32(msg.ReconsumeTimes),
+							}
+
+							select {
+							case consumerInfo.MessageChan <- protoMsg:
+								log.Printf("Message sent to channel: %s (topic: %s)", msg.MsgId, msg.Topic)
+							case <-time.After(5 * time.Second):
+								log.Printf("⚠️ Message channel send timeout, will retry later: %s", msg.MsgId)
+								metrics.GlobalMetrics.IncChannelFullEvents()
+								return consumer.ConsumeRetryLater, fmt.Errorf("message channel timeout - will retry")
+							}
+						}
+						return consumer.ConsumeSuccess, nil
+					})
+
+					if err != nil {
+						log.Printf("⚠️ Failed to add topic subscription %s to existing consumer: %v", req.Topic, err)
+						// 如果添加订阅失败，继续创建新的消费者
+					} else {
+						// 成功添加Topic订阅
+						consumerInfo.Topics[req.Topic] = true
+						log.Printf("✅ Added topic %s to existing consumer group %s", req.Topic, req.GroupId)
+					}
+				}
+
 				// 消费者仍然活跃，复用现有消费者
 				newConsumerID := uuid.New().String()
 
@@ -502,11 +550,16 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 				consumerInfo.RefCount++
 				consumerInfo.LastActive = time.Now()
 
-				log.Printf("✅ Reusing consumer: ID=%s, Group=%s, Topic=%s, RefCount=%d",
-					newConsumerID, req.GroupId, req.Topic, consumerInfo.RefCount)
+				topicList := make([]string, 0, len(consumerInfo.Topics))
+				for topic := range consumerInfo.Topics {
+					topicList = append(topicList, topic)
+				}
+
+				log.Printf("✅ Reusing consumer: ID=%s, Group=%s, Topics=%v, RefCount=%d",
+					newConsumerID, req.GroupId, topicList, consumerInfo.RefCount)
 				return &proto.CreateConsumerResponse{
 					Success:    true,
-					Message:    fmt.Sprintf("Consumer reused (ref: %d) - cluster mode", consumerInfo.RefCount),
+					Message:    fmt.Sprintf("Consumer reused (ref: %d) - cluster mode, topics: %v", consumerInfo.RefCount, topicList),
 					ConsumerId: newConsumerID,
 				}, nil
 			} else {
@@ -520,7 +573,7 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 	// 清理其他不活跃的消费者（但不影响当前创建）
 	var inactiveConsumers []string
 	for consumerID, existingConsumer := range s.consumers {
-		if existingConsumer.GroupID == req.GroupId && existingConsumer.Topic == req.Topic {
+		if existingConsumer.GroupID == req.GroupId {
 			timeSinceLastActive := time.Since(existingConsumer.LastActive)
 			if timeSinceLastActive > 5*time.Minute {
 				inactiveConsumers = append(inactiveConsumers, consumerID)
@@ -604,7 +657,7 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 
 			select {
 			case messageChan <- protoMsg:
-				log.Printf("Message sent to channel: %s", msg.MsgId)
+				log.Printf("Message sent to channel: %s (topic: %s)", msg.MsgId, msg.Topic)
 			case <-consumerCtx.Done():
 				log.Printf("Consumer context cancelled, dropping message: %s", msg.MsgId)
 				return consumer.ConsumeRetryLater, fmt.Errorf("consumer context cancelled")
@@ -638,7 +691,7 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 	// 存储消费者信息
 	consumerInfo := &ConsumerInfo{
 		Consumer:    c,
-		Topic:       req.Topic,
+		Topics:      map[string]bool{req.Topic: true}, // 初始化Topics映射
 		GroupID:     consumerGroup,
 		Endpoint:    req.Endpoint,
 		InstanceId:  req.InstanceId,
@@ -657,7 +710,7 @@ func (s *RocketMQProxyService) CreateConsumer(ctx context.Context, req *proto.Cr
 	// 统计同组消费者数量
 	sameGroupCount := 0
 	for _, consumer := range s.consumers {
-		if consumer.GroupID == consumerGroup && consumer.Topic == req.Topic {
+		if consumer.GroupID == consumerGroup {
 			sameGroupCount++
 		}
 	}
@@ -942,8 +995,8 @@ func (s *RocketMQProxyService) cleanupConsumerInternal(consumerID string) error 
 		return fmt.Errorf("consumer not found: %s", consumerID)
 	}
 
-	log.Printf("🧹 Cleaning up consumer: ID=%s, Group=%s, Topic=%s, RefCount=%d",
-		consumerID, consumerInfo.GroupID, consumerInfo.Topic, consumerInfo.RefCount)
+	log.Printf("🧹 Cleaning up consumer: ID=%s, Group=%s, Topics=%v, RefCount=%d",
+		consumerID, consumerInfo.GroupID, getTopicList(consumerInfo.Topics), consumerInfo.RefCount)
 
 	// 减少引用计数
 	consumerInfo.RefCount--
@@ -1048,7 +1101,7 @@ func (s *RocketMQProxyService) CleanupConsumer(ctx context.Context, req *proto.C
 		// 通过组名清理（可选配合Topic）
 		for consumerID, consumerInfo := range s.consumers {
 			if consumerInfo.GroupID == req.GroupId {
-				if req.Topic == "" || consumerInfo.Topic == req.Topic {
+				if req.Topic == "" || consumerInfo.Topics[req.Topic] {
 					toCleanup = append(toCleanup, consumerID)
 				}
 			}
@@ -1164,8 +1217,8 @@ func (s *RocketMQProxyService) ShutdownAllConsumers() {
 
 	for consumerID, consumerInfo := range s.consumers {
 		if !shutdownConsumers[consumerInfo.Consumer] {
-			log.Printf("🧹 Shutting down consumer: ID=%s, Group=%s, Topic=%s, RefCount=%d",
-				consumerID, consumerInfo.GroupID, consumerInfo.Topic, consumerInfo.RefCount)
+			log.Printf("🧹 Shutting down consumer: ID=%s, Group=%s, Topics=%v, RefCount=%d",
+				consumerID, consumerInfo.GroupID, getTopicList(consumerInfo.Topics), consumerInfo.RefCount)
 
 			// 取消消费者上下文
 			if consumerInfo.CancelFunc != nil {
@@ -1236,8 +1289,8 @@ func (s *RocketMQProxyService) cleanupSharedConsumerInternal(consumerKey Consume
 
 	// 如果消费者还存在，也清理掉
 	if consumerInfo, exists := s.consumers[consumerID]; exists {
-		log.Printf("🧹 Cleaning up shared consumer: ID=%s, Group=%s, Topic=%s",
-			consumerID, consumerInfo.GroupID, consumerInfo.Topic)
+		log.Printf("🧹 Cleaning up shared consumer: ID=%s, Group=%s, Topics=%v",
+			consumerID, consumerInfo.GroupID, getTopicList(consumerInfo.Topics))
 
 		// 取消消费者上下文
 		if consumerInfo.CancelFunc != nil {
@@ -1260,4 +1313,13 @@ func (s *RocketMQProxyService) cleanupSharedConsumerInternal(consumerKey Consume
 		// 减少消费者计数
 		metrics.GlobalMetrics.DecActiveConsumers()
 	}
+}
+
+// getTopicList 获取消费者订阅的Topic列表
+func getTopicList(topics map[string]bool) string {
+	topicList := make([]string, 0, len(topics))
+	for topic := range topics {
+		topicList = append(topicList, topic)
+	}
+	return fmt.Sprintf("%v", topicList)
 }
