@@ -75,6 +75,7 @@ jobs:
 
     # 安装Python依赖，修复distutils问题
     - name: Install Python dependencies
+      shell: bash
       run: |
         python -m pip install --upgrade pip
         python -m pip install setuptools wheel
@@ -111,6 +112,7 @@ jobs:
         echo "=== Dependencies installed successfully ==="
 
     - name: Build Go shared library
+      shell: bash
       env:
         GOOS: ${{ matrix.go_os }}
         GOARCH: ${{ matrix.go_arch }}
@@ -152,21 +154,28 @@ jobs:
         file "$OUTPUT_FILE"
 
     - name: Build Node.js addon
+      shell: bash
       env:
         npm_config_target_arch: ${{ matrix.arch }}
         npm_config_target_platform: ${{ matrix.go_os }}
         npm_config_cache: /tmp/.npm
         npm_config_build_from_source: true
-        PYTHON: python3
+        PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
       run: |
         echo "=== Building Node.js addon for ${{ matrix.platform }} ==="
         cd addon
         
         # 验证Python环境
         echo "Python version:"
-        python3 --version
-        echo "Checking distutils:"
-        python3 -c "import distutils; print('distutils available')" || echo "distutils not available"
+        if [ "${{ runner.os }}" = "Windows" ]; then
+          python --version
+          echo "Checking distutils:"
+          python -c "import distutils; print('distutils available')" || echo "distutils not available"
+        else
+          python3 --version
+          echo "Checking distutils:"
+          python3 -c "import distutils; print('distutils available')" || echo "distutils not available"
+        fi
         
         # Set cross-compilation environment for ARM64
         if [ "${{ matrix.platform }}" = "linux-arm64" ]; then
