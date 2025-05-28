@@ -203,18 +203,45 @@ jobs:
           export CXXFLAGS="-march=armv8-a"
           export LDFLAGS=""
           
+          # Force override any -m64 flags
+          export GYP_DEFINES="$GYP_DEFINES target_arch=arm64 host_arch=x64"
+          export CFLAGS="$CFLAGS -fPIC"
+          export CXXFLAGS="$CXXFLAGS -fPIC"
+          
           echo "ARM64 environment configured:"
           echo "CC=$CC"
           echo "CXX=$CXX"
           echo "CFLAGS=$CFLAGS"
           echo "CXXFLAGS=$CXXFLAGS"
+          echo "GYP_DEFINES=$GYP_DEFINES"
         fi
         
         echo "Building addon..."
         if [ "${{ matrix.platform }}" = "linux-arm64" ]; then
           # For ARM64, use node-gyp directly with specific configuration
-          ./node_modules/.bin/node-gyp configure --target_arch=arm64
+          echo "Configuring for ARM64..."
+          
+          # Create a temporary gyp include file to override settings
+          cat > arm64.gypi << 'EOF'
+{
+  'target_defaults': {
+    'cflags!': ['-m64'],
+    'cflags_cc!': ['-m64'],
+    'ldflags!': ['-m64'],
+    'cflags': ['-march=armv8-a', '-fPIC'],
+    'cflags_cc': ['-march=armv8-a', '-fPIC', '-std=c++14'],
+    'ldflags': ['-march=armv8-a']
+  }
+}
+EOF
+          
+          ./node_modules/.bin/node-gyp clean
+          ./node_modules/.bin/node-gyp configure --target_arch=arm64 --target_platform=linux -I arm64.gypi
+          echo "Building for ARM64..."
           ./node_modules/.bin/node-gyp build --target_arch=arm64
+          
+          # Clean up
+          rm -f arm64.gypi
         else
           npm run build
         fi
