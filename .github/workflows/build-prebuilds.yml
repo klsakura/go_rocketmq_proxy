@@ -57,7 +57,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '16'
+        node-version: '18'
         cache: 'npm'
         cache-dependency-path: |
           node-client-v2/package-lock.json
@@ -71,7 +71,15 @@ jobs:
     - name: Setup Python (for node-gyp)
       uses: actions/setup-python@v4
       with:
-        python-version: '3.x'
+        python-version: '3.11'
+
+    # 安装Python依赖，修复distutils问题
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install setuptools wheel
+        # 对于较新的Python版本，安装distutils
+        python -c "import distutils" 2>/dev/null || python -m pip install setuptools-distutils || true
 
     # Linux ARM64 specific setup
     - name: Setup Linux ARM64 cross-compilation
@@ -94,10 +102,13 @@ jobs:
 
     - name: Install dependencies
       run: |
+        echo "=== Installing Node.js dependencies ==="
         cd node-client-v2
         npm ci
+        echo "=== Installing Addon dependencies ==="
         cd ../addon
         npm ci
+        echo "=== Dependencies installed successfully ==="
 
     - name: Build Go shared library
       env:
@@ -105,6 +116,7 @@ jobs:
         GOARCH: ${{ matrix.go_arch }}
         CGO_ENABLED: 1
       run: |
+        echo "=== Building Go shared library for ${{ matrix.platform }} ==="
         cd cgo
         mkdir -p ../node-client-v2/prebuilds/${{ matrix.platform }}
         
@@ -117,8 +129,11 @@ jobs:
           OUTPUT_FILE="../node-client-v2/prebuilds/${{ matrix.platform }}/librocketmq_cgo.so"
         fi
         
+        echo "Building Go library: $OUTPUT_FILE"
         go build -buildmode=c-shared -o "$OUTPUT_FILE" rocketmq_cgo.go
+        echo "Go library built successfully:"
         ls -la "$OUTPUT_FILE"
+        file "$OUTPUT_FILE"
 
     - name: Build Node.js addon
       env:
@@ -126,11 +141,20 @@ jobs:
         npm_config_target_platform: ${{ matrix.go_os }}
         npm_config_cache: /tmp/.npm
         npm_config_build_from_source: true
+        PYTHON: python3
       run: |
+        echo "=== Building Node.js addon for ${{ matrix.platform }} ==="
         cd addon
+        
+        # 验证Python环境
+        echo "Python version:"
+        python3 --version
+        echo "Checking distutils:"
+        python3 -c "import distutils; print('distutils available')" || echo "distutils not available"
         
         # Set cross-compilation environment for ARM64
         if [ "${{ matrix.platform }}" = "linux-arm64" ]; then
+          echo "Setting up ARM64 cross-compilation"
           export CC=aarch64-linux-gnu-gcc
           export CXX=aarch64-linux-gnu-g++
           export AR=aarch64-linux-gnu-ar
@@ -139,11 +163,17 @@ jobs:
           npm config set target_arch arm64
         fi
         
+        echo "Building addon..."
         npm run build
+        
+        echo "Addon built successfully:"
+        ls -la build/Release/
+        file build/Release/rocketmq_addon.node
         
         # Copy to prebuilds directory
         mkdir -p ../node-client-v2/prebuilds/${{ matrix.platform }}
         cp build/Release/rocketmq_addon.node ../node-client-v2/prebuilds/${{ matrix.platform }}/
+        echo "Copied to prebuilds:"
         ls -la ../node-client-v2/prebuilds/${{ matrix.platform }}/
 
     - name: Test binary loading
@@ -206,7 +236,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '16'
+        node-version: '18'
 
     - name: Build TypeScript SDK
       run: |

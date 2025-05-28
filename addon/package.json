@@ -7,13 +7,14 @@
         "build": "node-gyp rebuild",
         "clean": "node-gyp clean",
         "configure": "node-gyp configure",
-        "test": "node test.js"
+        "test": "node test.js",
+        "install": "node-gyp rebuild"
     },
     "dependencies": {
         "nan": "^2.17.0"
     },
     "devDependencies": {
-        "node-gyp": "^9.0.0"
+        "node-gyp": "^10.0.0"
     },
     "keywords": [
         "rocketmq",
