@@ -1,129 +1,84 @@
 #!/usr/bin/env node
 
-const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 function getPlatformInfo() {
     const platform = os.platform();
     const arch = os.arch();
     const platformKey = `${platform}-${arch}`;
-
-    const platformNames = {
-        'darwin-arm64': 'macOS Apple Silicon (M1/M2)',
-        'darwin-x64': 'macOS Intel',
-        'linux-x64': 'Linux x64',
-        'linux-arm64': 'Linux ARM64',
-        'win32-x64': 'Windows x64'
-    };
-
-    return {
-        platform,
-        arch,
-        platformKey,
-        name: platformNames[platformKey] || `${platform}-${arch}`
-    };
+    return { platform, arch, platformKey };
 }
 
-function checkBinaries() {
-    const platformInfo = getPlatformInfo();
+function checkPlatformBinaries() {
+    console.log('🎯 RocketMQ Native SDK - Platform Check');
+    console.log('==================================================');
 
-    console.log(`🔍 Platform: ${platformInfo.name} (${platformInfo.platformKey})`);
+    const { platform, arch, platformKey } = getPlatformInfo();
+    console.log(`🔍 Platform: ${platform} ${arch} (${platformKey})`);
 
-    const goLib = path.join(__dirname, '../../cgo/librocketmq_cgo.so');
-    const addon = path.join(__dirname, '../../addon/build/Release/rocketmq_addon.node');
+    // Check prebuilt binaries first
+    const prebuildsDir = path.join(__dirname, '..', 'prebuilds', platformKey);
+    const goLibExt = platform === 'win32' ? '.dll' : platform === 'darwin' ? '.dylib' : '.so';
+    const goLibPath = path.join(prebuildsDir, `librocketmq_cgo${goLibExt}`);
+    const addonPath = path.join(prebuildsDir, 'rocketmq_addon.node');
 
-    let allFound = true;
-
-    if (!fs.existsSync(goLib)) {
-        console.log('❌ Go shared library not found:', goLib);
-        allFound = false;
-    } else {
-        console.log('✅ Go shared library found');
+    let hasPrebuilts = false;
+    if (fs.existsSync(goLibPath) && fs.existsSync(addonPath)) {
+        console.log('✅ Prebuilt binaries found');
+        console.log(`   Go library: ${goLibPath}`);
+        console.log(`   Node addon: ${addonPath}`);
+        hasPrebuilts = true;
     }
 
-    if (!fs.existsSync(addon)) {
-        console.log('❌ Node.js addon not found:', addon);
-        allFound = false;
-    } else {
-        console.log('✅ Node.js addon found');
+    // Check local build
+    const localGoLib = path.join(__dirname, '..', '..', 'cgo', `librocketmq_cgo${goLibExt}`);
+    const localAddon = path.join(__dirname, '..', '..', 'addon', 'build', 'Release', 'rocketmq_addon.node');
+
+    let hasLocalBuild = false;
+    if (fs.existsSync(localGoLib) && fs.existsSync(localAddon)) {
+        console.log('✅ Local build found');
+        console.log(`   Go library: ${localGoLib}`);
+        console.log(`   Node addon: ${localAddon}`);
+        hasLocalBuild = true;
     }
 
-    return allFound;
-}
+    if (hasPrebuilts || hasLocalBuild) {
+        console.log('🎉 Native components are available!');
+        return true;
+    }
 
-function showBuildInstructions() {
-    const platformInfo = getPlatformInfo();
-
-    console.log('\n🔧 Build Instructions:');
-    console.log('='.repeat(50));
-
-    // 系统要求
-    console.log('\n📋 System Requirements:');
+    console.log('⚠️  No native components found');
+    console.log('');
+    console.log('🔧 Build Instructions:');
+    console.log('==================================================');
+    console.log('📋 System Requirements:');
     console.log('- Go 1.21+ (for CGO shared library)');
     console.log('- Node.js 12+ (for Native Addon)');
     console.log('- C++ compiler:');
-
-    switch (platformInfo.platform) {
-        case 'darwin':
-            console.log('  • Xcode Command Line Tools: xcode-select --install');
-            break;
-        case 'linux':
-            console.log('  • GCC/G++: sudo apt-get install build-essential (Ubuntu/Debian)');
-            console.log('  •          sudo yum groupinstall "Development Tools" (CentOS/RHEL)');
-            break;
-        case 'win32':
-            console.log('  • Visual Studio Build Tools or Visual Studio Community');
-            break;
-        default:
-            console.log('  • Platform-specific C++ compiler');
-    }
-
-    // 构建命令
-    console.log('\n🚀 Build Commands:');
+    console.log('  • GCC/G++: sudo apt-get install build-essential (Ubuntu/Debian)');
+    console.log('  •          sudo yum groupinstall "Development Tools" (CentOS/RHEL)');
+    console.log('');
+    console.log('🚀 Build Commands:');
     console.log('npm run build:all');
-    console.log('\nOr step by step:');
+    console.log('');
+    console.log('Or step by step:');
     console.log('npm run build:go     # Build Go shared library');
     console.log('npm run build:addon  # Build C++ Native Addon');
-    console.log('npm run build:ts     # Build TypeScript SDK');
-
-    // 验证
-    console.log('\n✅ Verify Build:');
+    console.log('npm run build        # Build TypeScript SDK');
+    console.log('');
+    console.log('✅ Verify Build:');
     console.log('npm run example:health');
+
+    return false;
 }
 
-function main() {
-    console.log('🎯 RocketMQ Native SDK - Platform Check');
-    console.log('='.repeat(50));
-
-    if (checkBinaries()) {
-        console.log('\n🎉 All binaries found! Ready to use.');
-
-        // 显示平台特定警告
-        const platformInfo = getPlatformInfo();
-        if (platformInfo.platformKey === 'darwin-arm64') {
-            console.log('\n⚠️  Note: Binaries compiled for macOS ARM64 (M1/M2)');
-            console.log('   These will NOT work on other platforms.');
-            console.log('   Users on other platforms need to run: npm run build:all');
-        }
-
-        return true;
-    } else {
-        console.log('\n❌ Missing binaries detected!');
-        showBuildInstructions();
-        return false;
-    }
-}
-
-// 如果直接运行此脚本
+// Only run if called directly (not required)
 if (require.main === module) {
-    const success = main();
-    process.exit(success ? 0 : 1);
+    const hasNativeComponents = checkPlatformBinaries();
+    // Don't exit with error code - just inform
+    process.exit(0);
 }
 
-module.exports = {
-    getPlatformInfo,
-    checkBinaries,
-    showBuildInstructions,
-    main
-}; 
+module.exports = { checkPlatformBinaries, getPlatformInfo }; 

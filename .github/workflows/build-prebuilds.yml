@@ -104,10 +104,10 @@ jobs:
       run: |
         echo "=== Installing Node.js dependencies ==="
         cd node-client-v2
-        npm ci
+        npm install
         echo "=== Installing Addon dependencies ==="
         cd ../addon
-        npm ci
+        npm install
         echo "=== Dependencies installed successfully ==="
 
     - name: Build Go shared library
@@ -241,7 +241,7 @@ jobs:
     - name: Build TypeScript SDK
       run: |
         cd node-client-v2
-        npm ci
+        npm install
         npm run build
 
     - name: Test all platforms

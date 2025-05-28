@@ -21,7 +21,6 @@
         "clean": "rm -rf dist dist-esm",
         "dev": "tsc --watch",
         "prepublishOnly": "npm run build && npm run release:check",
-        "postinstall": "node scripts/check-platform.js || echo '⚠️  Run npm run build:all to build native components'",
         "test": "echo \"Error: no test specified\" && exit 1",
         "example:producer": "node examples/usage-demo.js producer",
         "example:consumer": "node examples/usage-demo.js consumer",
