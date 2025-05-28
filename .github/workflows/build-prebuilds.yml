@@ -176,11 +176,39 @@ jobs:
           export AR=aarch64-linux-gnu-ar
           export STRIP=aarch64-linux-gnu-strip
           export LINK=aarch64-linux-gnu-g++
+          
+          # Configure node-gyp for ARM64
           npm config set target_arch arm64
+          npm config set target_platform linux
+          npm config set cache /tmp/.npm
+          npm config set build_from_source true
+          
+          # Set GYP environment variables for ARM64
+          export GYP_DEFINES="target_arch=arm64"
+          export npm_config_target_arch=arm64
+          export npm_config_target_platform=linux
+          export npm_config_arch=arm64
+          
+          # Remove problematic flags for ARM64
+          export CFLAGS="-march=armv8-a"
+          export CXXFLAGS="-march=armv8-a"
+          export LDFLAGS=""
+          
+          echo "ARM64 environment configured:"
+          echo "CC=$CC"
+          echo "CXX=$CXX"
+          echo "CFLAGS=$CFLAGS"
+          echo "CXXFLAGS=$CXXFLAGS"
         fi
         
         echo "Building addon..."
-        npm run build
+        if [ "${{ matrix.platform }}" = "linux-arm64" ]; then
+          # For ARM64, use node-gyp directly with specific configuration
+          ./node_modules/.bin/node-gyp configure --target_arch=arm64
+          ./node_modules/.bin/node-gyp build --target_arch=arm64
+        else
+          npm run build
+        fi
         
         echo "Addon built successfully:"
         ls -la build/Release/

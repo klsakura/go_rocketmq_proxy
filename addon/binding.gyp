@@ -33,6 +33,21 @@
           "cflags_cc": [
             "-std=c++14",
             "-fPIC"
+          ],
+          "conditions": [
+            ["target_arch=='arm64'", {
+              "cflags": [
+                "-march=armv8-a"
+              ],
+              "cflags_cc": [
+                "-std=c++14",
+                "-fPIC",
+                "-march=armv8-a"
+              ],
+              "ldflags": [
+                "-march=armv8-a"
+              ]
+            }]
           ]
         }]
       ]
