@@ -17,7 +17,7 @@ extern "C"
 
     char *InitRocketMQ(const char *configJson);
     char *CreateProducer(const char *configJson, const char *topic);
-    char *SendMessage(const char *producerId, const char *messageBody, const char *tag, const char *propertiesJson);
+    char *SendRocketMQMessage(const char *producerId, const char *messageBody, const char *tag, const char *propertiesJson);
     char *SendOrderedMessage(const char *producerId, const char *messageBody, const char *tag, const char *propertiesJson, const char *shardingKey);
     char *CreateConsumer(const char *configJson, const char *topic, const char *groupId, const char *tagExpression);
     char *StartConsumer(const char *consumerId, const char *topic, const char *tagExpression);

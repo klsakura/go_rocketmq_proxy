@@ -1,5 +1,9 @@
 #include "rocketmq_addon.h"
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #include <iostream>
 #include <sstream>
 
@@ -15,12 +19,16 @@ namespace rocketmq_addon
     v8::Persistent<v8::Function> Consumer::constructor;
 
     // 动态库句柄
+#ifdef _WIN32
+    static HMODULE go_lib_handle = nullptr;
+#else
     static void *go_lib_handle = nullptr;
+#endif
 
     // 动态加载Go库的函数指针
     static char *(*go_InitRocketMQ)(const char *) = nullptr;
     static char *(*go_CreateProducer)(const char *, const char *) = nullptr;
-    static char *(*go_SendMessage)(const char *, const char *, const char *, const char *) = nullptr;
+    static char *(*go_SendRocketMQMessage)(const char *, const char *, const char *, const char *) = nullptr;
     static char *(*go_SendOrderedMessage)(const char *, const char *, const char *, const char *, const char *) = nullptr;
     static char *(*go_CreateConsumer)(const char *, const char *, const char *, const char *) = nullptr;
     static char *(*go_StartConsumer)(const char *, const char *, const char *) = nullptr;
@@ -38,7 +46,55 @@ namespace rocketmq_addon
             return true; // 已经加载
         }
 
-        // 尝试加载动态库
+#ifdef _WIN32
+        // Windows路径
+        const char *lib_paths[] = {
+            ".\\librocketmq_cgo.dll",
+            "..\\cgo\\librocketmq_cgo.dll",
+            "librocketmq_cgo.dll",
+            nullptr};
+
+        for (int i = 0; lib_paths[i] != nullptr; i++)
+        {
+            go_lib_handle = LoadLibraryA(lib_paths[i]);
+            if (go_lib_handle != nullptr)
+            {
+                break;
+            }
+        }
+
+        if (go_lib_handle == nullptr)
+        {
+            DWORD error = GetLastError();
+            std::cerr << "Failed to load Go library. Error code: " << error << std::endl;
+            return false;
+        }
+
+        // 加载函数符号 (Windows)
+        go_InitRocketMQ = (char *(*)(const char *))GetProcAddress(go_lib_handle, "InitRocketMQ");
+        go_CreateProducer = (char *(*)(const char *, const char *))GetProcAddress(go_lib_handle, "CreateProducer");
+        go_SendRocketMQMessage = (char *(*)(const char *, const char *, const char *, const char *))GetProcAddress(go_lib_handle, "SendMessage");
+        go_SendOrderedMessage = (char *(*)(const char *, const char *, const char *, const char *, const char *))GetProcAddress(go_lib_handle, "SendOrderedMessage");
+        go_CreateConsumer = (char *(*)(const char *, const char *, const char *, const char *))GetProcAddress(go_lib_handle, "CreateConsumer");
+        go_StartConsumer = (char *(*)(const char *, const char *, const char *))GetProcAddress(go_lib_handle, "StartConsumer");
+        go_RegisterMessageHandler = (char *(*)(const char *, MessageHandler))GetProcAddress(go_lib_handle, "RegisterMessageHandler");
+        go_AckMessage = (char *(*)(const char *, const char *))GetProcAddress(go_lib_handle, "AckMessage");
+        go_ShutdownProducer = (char *(*)(const char *))GetProcAddress(go_lib_handle, "ShutdownProducer");
+        go_ShutdownConsumer = (char *(*)(const char *))GetProcAddress(go_lib_handle, "ShutdownConsumer");
+        go_FreeString = (void (*)(char *))GetProcAddress(go_lib_handle, "FreeString");
+
+        if (!go_InitRocketMQ || !go_CreateProducer || !go_SendRocketMQMessage ||
+            !go_SendOrderedMessage || !go_CreateConsumer || !go_StartConsumer ||
+            !go_RegisterMessageHandler || !go_AckMessage || !go_ShutdownProducer ||
+            !go_ShutdownConsumer || !go_FreeString)
+        {
+            std::cerr << "Failed to load Go library functions" << std::endl;
+            FreeLibrary(go_lib_handle);
+            go_lib_handle = nullptr;
+            return false;
+        }
+#else
+        // Unix路径
         const char *lib_paths[] = {
             "./librocketmq_cgo.so",
             "../cgo/librocketmq_cgo.so",
@@ -60,10 +116,10 @@ namespace rocketmq_addon
             return false;
         }
 
-        // 加载函数符号
+        // 加载函数符号 (Unix)
         go_InitRocketMQ = (char *(*)(const char *))dlsym(go_lib_handle, "InitRocketMQ");
         go_CreateProducer = (char *(*)(const char *, const char *))dlsym(go_lib_handle, "CreateProducer");
-        go_SendMessage = (char *(*)(const char *, const char *, const char *, const char *))dlsym(go_lib_handle, "SendMessage");
+        go_SendRocketMQMessage = (char *(*)(const char *, const char *, const char *, const char *))dlsym(go_lib_handle, "SendMessage");
         go_SendOrderedMessage = (char *(*)(const char *, const char *, const char *, const char *, const char *))dlsym(go_lib_handle, "SendOrderedMessage");
         go_CreateConsumer = (char *(*)(const char *, const char *, const char *, const char *))dlsym(go_lib_handle, "CreateConsumer");
         go_StartConsumer = (char *(*)(const char *, const char *, const char *))dlsym(go_lib_handle, "StartConsumer");
@@ -73,7 +129,7 @@ namespace rocketmq_addon
         go_ShutdownConsumer = (char *(*)(const char *))dlsym(go_lib_handle, "ShutdownConsumer");
         go_FreeString = (void (*)(char *))dlsym(go_lib_handle, "FreeString");
 
-        if (!go_InitRocketMQ || !go_CreateProducer || !go_SendMessage ||
+        if (!go_InitRocketMQ || !go_CreateProducer || !go_SendRocketMQMessage ||
             !go_SendOrderedMessage || !go_CreateConsumer || !go_StartConsumer ||
             !go_RegisterMessageHandler || !go_AckMessage || !go_ShutdownProducer ||
             !go_ShutdownConsumer || !go_FreeString)
@@ -83,6 +139,7 @@ namespace rocketmq_addon
             go_lib_handle = nullptr;
             return false;
         }
+#endif
 
         return true;
     }
@@ -281,7 +338,7 @@ namespace rocketmq_addon
         std::string tag = V8StringToStdString(isolate, args[2]);
         std::string propertiesJson = V8ObjectToJsonString(isolate, args[3]->ToObject(isolate->GetCurrentContext()).ToLocalChecked());
 
-        char *result = go_SendMessage(producerId.c_str(), messageBody.c_str(), tag.c_str(), propertiesJson.c_str());
+        char *result = go_SendRocketMQMessage(producerId.c_str(), messageBody.c_str(), tag.c_str(), propertiesJson.c_str());
         v8::Local<v8::Object> resultObj = JsonStringToV8Object(isolate, std::string(result));
         go_FreeString(result);
 
@@ -550,7 +607,7 @@ namespace rocketmq_addon
             propertiesJson = V8ObjectToJsonString(isolate, args[2]->ToObject(isolate->GetCurrentContext()).ToLocalChecked());
         }
 
-        char *result = go_SendMessage(obj->producer_id_.c_str(), messageBody.c_str(), tag.c_str(), propertiesJson.c_str());
+        char *result = go_SendRocketMQMessage(obj->producer_id_.c_str(), messageBody.c_str(), tag.c_str(), propertiesJson.c_str());
         v8::Local<v8::Object> resultObj = JsonStringToV8Object(isolate, std::string(result));
         go_FreeString(result);
 
