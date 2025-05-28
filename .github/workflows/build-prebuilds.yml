@@ -118,6 +118,22 @@ jobs:
       run: |
         echo "=== Building Go shared library for ${{ matrix.platform }} ==="
         cd cgo
+        
+        # Initialize Go module and download dependencies
+        echo "Initializing Go module..."
+        go version
+        go env
+        
+        echo "Current directory contents:"
+        ls -la
+        
+        echo "Downloading Go dependencies..."
+        go mod download
+        go mod verify
+        
+        echo "Tidying Go modules..."
+        go mod tidy
+        
         mkdir -p ../node-client-v2/prebuilds/${{ matrix.platform }}
         
         # Set output file extension based on platform
@@ -130,7 +146,7 @@ jobs:
         fi
         
         echo "Building Go library: $OUTPUT_FILE"
-        go build -buildmode=c-shared -o "$OUTPUT_FILE" rocketmq_cgo.go
+        go build -v -buildmode=c-shared -o "$OUTPUT_FILE" rocketmq_cgo.go
         echo "Go library built successfully:"
         ls -la "$OUTPUT_FILE"
         file "$OUTPUT_FILE"

@@ -8,7 +8,6 @@
 
 # Dependencies
 node_modules/
-/cgo/go.sum
 
 # Deprecated files (Pure Native Mode)
 go.mod.deprecated
