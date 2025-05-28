@@ -1,0 +1,32 @@
+{
+    "name": "@klsakura/rocketmq-native-addon",
+    "version": "1.0.0",
+    "description": "Native C++ Addon for RocketMQ with Go backend",
+    "main": "build/Release/rocketmq_addon.node",
+    "scripts": {
+        "build": "node-gyp rebuild",
+        "clean": "node-gyp clean",
+        "configure": "node-gyp configure",
+        "test": "node test.js"
+    },
+    "dependencies": {
+        "nan": "^2.17.0"
+    },
+    "devDependencies": {
+        "node-gyp": "^9.0.0"
+    },
+    "keywords": [
+        "rocketmq",
+        "native",
+        "addon",
+        "cpp",
+        "go",
+        "message-queue"
+    ],
+    "author": "hezhe",
+    "license": "MIT",
+    "engines": {
+        "node": ">=12.0.0"
+    },
+    "gypfile": true
+}

@@ -1,0 +1,95 @@
+{
+    "name": "@klsakura/rocketmq-native-sdk",
+    "version": "2.0.0",
+    "description": "High-performance Node.js client SDK for RocketMQ with Native Addon support",
+    "main": "dist/index.js",
+    "module": "dist/index.mjs",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": "./dist/index.mjs",
+            "require": "./dist/index.js",
+            "types": "./dist/index.d.ts"
+        }
+    },
+    "scripts": {
+        "build": "npm run clean && npm run build:cjs && npm run build:esm && npm run build:types && npm run fix:esm",
+        "build:cjs": "tsc --module commonjs --outDir dist --target es2018",
+        "build:esm": "tsc --module esnext --outDir dist-esm --target es2020 && mv dist-esm/index.js dist/index.mjs && rm -rf dist-esm",
+        "build:types": "tsc --declaration --emitDeclarationOnly --outDir dist",
+        "fix:esm": "node scripts/fix-esm.js",
+        "clean": "rm -rf dist dist-esm",
+        "dev": "tsc --watch",
+        "prepublishOnly": "npm run build && npm run release:check",
+        "postinstall": "node scripts/check-platform.js || echo '⚠️  Run npm run build:all to build native components'",
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "example:producer": "node examples/usage-demo.js producer",
+        "example:consumer": "node examples/usage-demo.js consumer",
+        "example:health": "node examples/usage-demo.js health",
+        "build:addon": "cd ../addon && npm run build",
+        "build:go": "cd ../cgo && go build -buildmode=c-shared -o librocketmq_cgo.so rocketmq_cgo.go",
+        "build:all": "npm run build:go && npm run build:addon && npm run build",
+        "build:platforms": "node scripts/build-all-platforms.js",
+        "build:platforms:all": "node scripts/build-all-platforms.js all",
+        "build:platforms:check": "node scripts/build-all-platforms.js check",
+        "build:platforms:go": "node scripts/build-all-platforms.js go",
+        "check:platform": "node scripts/check-platform.js",
+        "check:binaries": "node scripts/check-platform.js",
+        "release:check": "node scripts/prepare-release.js check",
+        "release:notes": "node scripts/prepare-release.js notes",
+        "release:test": "node scripts/prepare-release.js test",
+        "release:prepare": "node scripts/prepare-release.js full",
+        "docker:build": "node scripts/docker-build.js build",
+        "docker:build:all": "node scripts/docker-build.js all",
+        "docker:build:linux": "node scripts/docker-build.js build linux-x64",
+        "docker:build:linux-arm": "node scripts/docker-build.js build linux-arm64"
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "@types/node": "^18.0.0",
+        "typescript": "^5.8.3"
+    },
+    "optionalDependencies": {
+        "@klsakura/rocketmq-native-addon": "file:../addon"
+    },
+    "keywords": [
+        "rocketmq",
+        "native",
+        "addon",
+        "nodejs",
+        "typescript",
+        "message-queue",
+        "sdk",
+        "client",
+        "performance",
+        "high-performance",
+        "go",
+        "cgo",
+        "cross-platform",
+        "prebuilt",
+        "multi-platform"
+    ],
+    "author": "hezhe",
+    "license": "MIT",
+    "files": [
+        "dist/",
+        "src/",
+        "prebuilds/",
+        "examples/",
+        "scripts/",
+        "README.md",
+        "CHANGELOG.md"
+    ],
+    "engines": {
+        "node": ">=12.20.0"
+    },
+    "os": [
+        "darwin",
+        "linux",
+        "win32"
+    ],
+    "cpu": [
+        "x64",
+        "arm64"
+    ]
+}
