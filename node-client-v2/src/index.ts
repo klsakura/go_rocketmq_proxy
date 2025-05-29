@@ -16,6 +16,8 @@ export interface MQConfig {
     accessKeyId: string;
     accessKeySecret: string;
     instanceId: string;
+    logLevel?: string;    // 可选：日志级别 (debug, info, warn, error, fatal)
+    thread?: number;      // 可选：消费者并发线程数，默认为 20
 }
 
 export interface MessageData {
@@ -117,7 +119,9 @@ class NativeClient {
                 endpoint: this.config.endpoint,
                 accessKeyId: this.config.accessKeyId,
                 accessKeySecret: this.config.accessKeySecret,
-                instanceId: this.config.instanceId
+                instanceId: this.config.instanceId,
+                ...(this.config.logLevel && { logLevel: this.config.logLevel }),
+                ...(this.config.thread && { thread: this.config.thread })
             };
 
             const result = this.nativeClient.initRocketMQ(configJson);

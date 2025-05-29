@@ -26,7 +26,6 @@ namespace rocketmq_addon
 
     // 静态成员初始化
     std::map<std::string, std::shared_ptr<MessageHandlerWrapper>> MessageHandlerWrapper::handlers_;
-    std::string MessageHandlerWrapper::current_consumer_id_;
 
     Napi::FunctionReference RocketMQClient::constructor;
     Napi::FunctionReference Producer::constructor;
@@ -232,33 +231,132 @@ namespace rocketmq_addon
 
     MessageHandlerWrapper::~MessageHandlerWrapper()
     {
+        CleanupThreadSafeCallback();
+    }
+
+    void MessageHandlerWrapper::SetupThreadSafeCallback(const std::string &consumerId)
+    {
+        consumer_id_ = consumerId;
+
+        // 创建线程安全函数
+        thread_safe_callback_ = Napi::ThreadSafeFunction::New(
+            env_,
+            callback_.Value(),
+            "RocketMQ Message Handler",
+            0, // 无限队列大小
+            1  // 只有一个线程会调用
+        );
+    }
+
+    void MessageHandlerWrapper::CleanupThreadSafeCallback()
+    {
+        if (thread_safe_callback_)
+        {
+            thread_safe_callback_.Release();
+        }
+    }
+
+    void MessageHandlerWrapper::ThreadSafeCallback(Napi::Env env, Napi::Function jsCallback, MessageCallbackData *data)
+    {
+        if (data == nullptr)
+        {
+            return;
+        }
+
+        try
+        {
+            // 解析JSON消息
+            Napi::Object messageObj = JsonStringToNapiObject(env, data->messageJson);
+
+            // 调用JavaScript回调
+            jsCallback.Call({messageObj});
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "Error in thread-safe message handler: " << e.what() << std::endl;
+        }
+
+        // 清理数据
+        delete data;
     }
 
     void MessageHandlerWrapper::HandleMessage(const char *messageJson)
     {
-        try
+        if (thread_safe_callback_)
         {
-            // 解析JSON消息
-            Napi::Object messageObj = JsonStringToNapiObject(env_, std::string(messageJson));
+            // 创建消息数据
+            MessageCallbackData *data = new MessageCallbackData();
+            data->messageJson = std::string(messageJson);
+            data->consumerId = consumer_id_;
 
-            // 调用JavaScript回调
-            callback_.Call({messageObj});
+            // 非阻塞调用线程安全函数
+            auto status = thread_safe_callback_.NonBlockingCall(data, [](Napi::Env env, Napi::Function jsCallback, MessageCallbackData *data)
+                                                                {
+                if (data == nullptr) {
+                    return;
+                }
+
+                try
+                {
+                    // 直接传递 JSON 字符串给 JavaScript，而不是转换成对象
+                    Napi::String messageJsonStr = Napi::String::New(env, data->messageJson);
+
+                    // 调用JavaScript回调
+                    jsCallback.Call({messageJsonStr});
+                }
+                catch (const std::exception &e)
+                {
+                    std::cerr << "Error in thread-safe message handler: " << e.what() << std::endl;
+                }
+                
+                // 清理数据
+                delete data; });
+
+            if (status != napi_ok)
+            {
+                std::cerr << "Failed to call thread-safe function: " << status << std::endl;
+                delete data; // 清理数据
+            }
         }
-        catch (const std::exception &e)
+        else
         {
-            std::cerr << "Error in message handler: " << e.what() << std::endl;
+            std::cerr << "Thread-safe callback not initialized" << std::endl;
         }
     }
 
     void MessageHandlerWrapper::StaticHandleMessage(const char *messageJson)
     {
-        if (!current_consumer_id_.empty())
+        // 解析消息JSON，从中提取消费者ID
+        try
         {
-            auto it = handlers_.find(current_consumer_id_);
-            if (it != handlers_.end())
+            std::string messageStr(messageJson);
+            // 查找所有处理器，让每个处理器检查消息是否属于它
+            for (auto &pair : handlers_)
             {
-                it->second->HandleMessage(messageJson);
+                if (pair.second)
+                {
+                    pair.second->HandleMessage(messageJson);
+                    break; // 找到第一个处理器就退出，避免重复处理
+                }
             }
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "Error in StaticHandleMessage: " << e.what() << std::endl;
+        }
+    }
+
+    void MessageHandlerWrapper::StaticHandleMessageWithConsumerId(const char *consumerId, const char *messageJson)
+    {
+        std::string consumerIdStr(consumerId);
+        auto it = handlers_.find(consumerIdStr);
+        if (it != handlers_.end())
+        {
+            it->second->HandleMessage(messageJson);
+        }
+        else
+        {
+            std::cerr << "No handler found for consumer: " << consumerIdStr << std::endl;
         }
     }
 
@@ -610,11 +708,12 @@ namespace rocketmq_addon
 
             // 创建消息处理器
             auto handler = std::make_shared<MessageHandlerWrapper>(env, callback);
+
+            // 设置线程安全回调
+            handler->SetupThreadSafeCallback(consumerId);
+
             message_handlers_[consumerId] = handler;
             MessageHandlerWrapper::handlers_[consumerId] = handler;
-
-            // 设置当前消费者ID
-            MessageHandlerWrapper::current_consumer_id_ = consumerId;
 
             char *result = go_RegisterMessageHandler(consumerId.c_str(), MessageHandlerWrapper::StaticHandleMessage);
 
@@ -679,6 +778,20 @@ namespace rocketmq_addon
         if (info.Length() >= 1)
         {
             std::string consumerId = info[0].As<Napi::String>().Utf8Value();
+
+            // 清理消息处理器
+            auto handlerIt = message_handlers_.find(consumerId);
+            if (handlerIt != message_handlers_.end())
+            {
+                handlerIt->second->CleanupThreadSafeCallback();
+                message_handlers_.erase(handlerIt);
+            }
+
+            auto globalHandlerIt = MessageHandlerWrapper::handlers_.find(consumerId);
+            if (globalHandlerIt != MessageHandlerWrapper::handlers_.end())
+            {
+                MessageHandlerWrapper::handlers_.erase(globalHandlerIt);
+            }
 
             char *result = go_ShutdownConsumer(consumerId.c_str());
 

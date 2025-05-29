@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -40,11 +41,56 @@ var (
 		mutex:     sync.RWMutex{},
 	}
 	consumerManager = &ConsumerManager{
-		consumers: make(map[string]rocketmq.PushConsumer),
-		handlers:  make(map[string]C.MessageHandler),
-		mutex:     sync.RWMutex{},
+		consumers:       make(map[string]rocketmq.PushConsumer),
+		handlers:        make(map[string]C.MessageHandler),
+		goroutineCounts: make(map[string]int),
+		semaphores:      make(map[string]chan struct{}),
+		mutex:           sync.RWMutex{},
 	}
+	globalConfig = &Config{} // 全局配置
+	configMutex  = sync.RWMutex{}
 )
+
+// calculateDefaultGoroutines 根据系统资源计算默认协程数
+func calculateDefaultGoroutines() int {
+	cpuCount := runtime.NumCPU()
+
+	// 基于 CPU 核心数的推荐算法：
+	// - 对于 I/O 密集型任务（如消息处理），建议是 CPU 核心数的 2-4 倍
+	// - 考虑内存使用情况，每个协程大约占用 2KB 栈空间
+
+	var recommended int
+	switch {
+	case cpuCount <= 2:
+		// 单核或双核：8 个协程
+		recommended = 8
+	case cpuCount <= 4:
+		// 四核：CPU 核心数 * 3
+		recommended = cpuCount * 3
+	case cpuCount <= 8:
+		// 八核：CPU 核心数 * 2.5
+		recommended = int(float64(cpuCount) * 2.5)
+	case cpuCount <= 16:
+		// 16核：CPU 核心数 * 2
+		recommended = cpuCount * 2
+	default:
+		// 高核心数：CPU 核心数 * 1.5，但不超过 64
+		recommended = int(float64(cpuCount) * 1.5)
+		if recommended > 64 {
+			recommended = 64
+		}
+	}
+
+	// 确保最小值为 4，最大值为 64
+	if recommended < 4 {
+		recommended = 4
+	}
+	if recommended > 64 {
+		recommended = 64
+	}
+
+	return recommended
+}
 
 // ProducerManager 生产者管理器
 type ProducerManager struct {
@@ -54,9 +100,11 @@ type ProducerManager struct {
 
 // ConsumerManager 消费者管理器
 type ConsumerManager struct {
-	consumers map[string]rocketmq.PushConsumer
-	handlers  map[string]C.MessageHandler
-	mutex     sync.RWMutex
+	consumers       map[string]rocketmq.PushConsumer
+	handlers        map[string]C.MessageHandler
+	goroutineCounts map[string]int           // 每个消费者的协程数配置
+	semaphores      map[string]chan struct{} // 协程池信号量
+	mutex           sync.RWMutex
 }
 
 // Config 配置结构
@@ -65,6 +113,8 @@ type Config struct {
 	AccessKeyId     string `json:"accessKeyId"`
 	AccessKeySecret string `json:"accessKeySecret"`
 	InstanceId      string `json:"instanceId"`
+	LogLevel        string `json:"logLevel,omitempty"` // 可选：日志级别 (debug, info, warn, error, fatal)
+	Thread          int    `json:"thread,omitempty"`   // 可选：消费者并发协程数，0表示使用系统推荐值
 }
 
 // MessageProperties 消息属性
@@ -104,11 +154,46 @@ func InitRocketMQ(configJson *C.char) *C.char {
 	}
 
 	// 设置日志级别
-	rlog.SetLogLevel("warn")
+	logLevel := "warn" // 默认日志级别
+	if config.LogLevel != "" {
+		// 验证日志级别是否有效
+		validLevels := map[string]bool{
+			"debug": true,
+			"info":  true,
+			"warn":  true,
+			"error": true,
+			"fatal": true,
+		}
+		if validLevels[strings.ToLower(config.LogLevel)] {
+			logLevel = strings.ToLower(config.LogLevel)
+		} else {
+			return C.CString(fmt.Sprintf(`{"success": false, "message": "Invalid log level: %s. Valid levels: debug, info, warn, error, fatal"}`, config.LogLevel))
+		}
+	}
+	rlog.SetLogLevel(logLevel)
+
+	// 保存全局配置
+	configMutex.Lock()
+	*globalConfig = config
+	globalConfig.LogLevel = logLevel // 确保使用验证后的日志级别
+	configMutex.Unlock()
+
+	// 计算推荐的协程数
+	recommendedGoroutines := calculateDefaultGoroutines()
+	cpuCount := runtime.NumCPU()
 
 	result := map[string]interface{}{
-		"success": true,
-		"message": "RocketMQ initialized successfully",
+		"success":               true,
+		"message":               "RocketMQ initialized successfully",
+		"logLevel":              logLevel,
+		"thread":                config.Thread,
+		"recommendedGoroutines": recommendedGoroutines,
+		"cpuCores":              cpuCount,
+		"systemInfo": map[string]interface{}{
+			"cpuCores":  cpuCount,
+			"goVersion": runtime.Version(),
+			"arch":      runtime.GOARCH,
+		},
 	}
 
 	resultJson, _ := json.Marshal(result)
@@ -311,6 +396,16 @@ func CreateConsumer(configJson *C.char, topic *C.char, groupId *C.char, tagExpre
 
 	consumerId := fmt.Sprintf("%s_%s_%s_%d", config.InstanceId, topicStr, groupIdStr, time.Now().UnixNano())
 
+	// 获取全局配置中的协程数
+	configMutex.RLock()
+	goroutineCount := globalConfig.Thread
+	configMutex.RUnlock()
+
+	// 设置默认协程数：如果用户没有设置或设置为0，则使用系统推荐值
+	if goroutineCount <= 0 {
+		goroutineCount = calculateDefaultGoroutines()
+	}
+
 	// 创建消费者配置
 	opts := []consumer.Option{
 		consumer.WithNameServer([]string{config.Endpoint}),
@@ -321,6 +416,8 @@ func CreateConsumer(configJson *C.char, topic *C.char, groupId *C.char, tagExpre
 		consumer.WithGroupName(groupIdStr),
 		consumer.WithConsumeFromWhere(consumer.ConsumeFromLastOffset),
 		consumer.WithConsumerModel(consumer.Clustering),
+		consumer.WithConsumeMessageBatchMaxSize(1), // 每次消费一条消息
+		consumer.WithMaxReconsumeTimes(3),          // 最大重试次数
 	}
 
 	c, err := rocketmq.NewPushConsumer(opts...)
@@ -330,14 +427,17 @@ func CreateConsumer(configJson *C.char, topic *C.char, groupId *C.char, tagExpre
 
 	consumerManager.mutex.Lock()
 	consumerManager.consumers[consumerId] = c
+	consumerManager.goroutineCounts[consumerId] = goroutineCount
+	consumerManager.semaphores[consumerId] = make(chan struct{}, goroutineCount) // 创建协程池信号量
 	consumerManager.mutex.Unlock()
 
 	result := map[string]interface{}{
-		"success":    true,
-		"consumerId": consumerId,
-		"topic":      topicStr,
-		"groupId":    groupIdStr,
-		"message":    "Consumer created successfully",
+		"success":     true,
+		"consumerId":  consumerId,
+		"topic":       topicStr,
+		"groupId":     groupIdStr,
+		"threadCount": goroutineCount,
+		"message":     "Consumer created successfully",
 	}
 
 	resultJson, _ := json.Marshal(result)
@@ -380,15 +480,23 @@ func StartConsumer(consumerId *C.char, topic *C.char, tagExpression *C.char) *C.
 
 			messageJson, _ := json.Marshal(messageData)
 
-			// 调用注册的处理函数
+			// 获取协程池信号量和处理函数
 			consumerManager.mutex.RLock()
 			handler, hasHandler := consumerManager.handlers[consumerIdStr]
+			semaphore, hasSemaphore := consumerManager.semaphores[consumerIdStr]
 			consumerManager.mutex.RUnlock()
 
-			if hasHandler {
-				cMessageJson := C.CString(string(messageJson))
-				C.call_cpp_handler(handler, cMessageJson)
-				C.free(unsafe.Pointer(cMessageJson))
+			if hasHandler && hasSemaphore {
+				// 使用协程池处理消息
+				go func(msgJson []byte, msgHandler C.MessageHandler, sem chan struct{}) {
+					// 获取协程池令牌
+					sem <- struct{}{}
+					defer func() { <-sem }() // 释放令牌
+
+					cMessageJson := C.CString(string(msgJson))
+					C.call_cpp_handler(msgHandler, cMessageJson)
+					C.free(unsafe.Pointer(cMessageJson))
+				}(messageJson, handler, semaphore)
 			}
 		}
 		return consumer.ConsumeSuccess, nil
@@ -466,13 +574,31 @@ func ShutdownProducer(producerId *C.char) *C.char {
 func ShutdownConsumer(consumerId *C.char) *C.char {
 	consumerIdStr := C.GoString(consumerId)
 
+	// 添加 panic 恢复机制
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered from panic in ShutdownConsumer: %v", r)
+		}
+	}()
+
 	consumerManager.mutex.Lock()
 	defer consumerManager.mutex.Unlock()
 
 	if c, exists := consumerManager.consumers[consumerIdStr]; exists {
-		c.Shutdown()
+		// 安全关闭，捕获可能的 panic
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Recovered from panic during consumer shutdown: %v", r)
+				}
+			}()
+			c.Shutdown()
+		}()
+
 		delete(consumerManager.consumers, consumerIdStr)
 		delete(consumerManager.handlers, consumerIdStr)
+		delete(consumerManager.goroutineCounts, consumerIdStr)
+		delete(consumerManager.semaphores, consumerIdStr)
 	}
 
 	result := map[string]interface{}{

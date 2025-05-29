@@ -52,6 +52,13 @@ extern "C"
 namespace rocketmq_addon
 {
 
+    // 线程安全的消息数据结构
+    struct MessageCallbackData
+    {
+        std::string messageJson;
+        std::string consumerId;
+    };
+
     // 消息处理器包装类 - 使用Node-API获得更好的ABI稳定性
     class MessageHandlerWrapper
     {
@@ -62,12 +69,23 @@ namespace rocketmq_addon
         void HandleMessage(const char *messageJson);
         static void StaticHandleMessage(const char *messageJson);
 
+        // 新增：支持直接指定消费者ID的静态处理函数
+        static void StaticHandleMessageWithConsumerId(const char *consumerId, const char *messageJson);
+
+        // 线程安全回调相关
+        void SetupThreadSafeCallback(const std::string &consumerId);
+        void CleanupThreadSafeCallback();
+
         static std::map<std::string, std::shared_ptr<MessageHandlerWrapper>> handlers_;
-        static std::string current_consumer_id_;
 
     private:
         Napi::Env env_;
         Napi::FunctionReference callback_;
+        Napi::ThreadSafeFunction thread_safe_callback_;
+        std::string consumer_id_;
+
+        // 线程安全回调函数
+        static void ThreadSafeCallback(Napi::Env env, Napi::Function jsCallback, MessageCallbackData *data);
     };
 
     // RocketMQ客户端包装类 - 继承自Napi::ObjectWrap以获得跨版本兼容性
