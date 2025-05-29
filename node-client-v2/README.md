@@ -18,50 +18,117 @@ npm install @klsakura/rocketmq-native-sdk
 ### CommonJS
 
 ```javascript
-const { Producer, Consumer } = require('@klsakura/rocketmq-native-sdk');
+const { MQClient, MessageProperties } = require('@klsakura/rocketmq-native-sdk');
+
+// Create client
+const config = {
+    endpoint: 'your-rocketmq-endpoint',
+    accessKeyId: 'your-access-key-id',
+    accessKeySecret: 'your-access-key-secret',
+    instanceId: 'your-instance-id'
+};
+
+const client = new MQClient(config);
 
 // Create producer
-const producer = new Producer({
-    nameServer: 'localhost:9876',
-    groupName: 'test-producer'
-});
+const producer = await client.getProducer('your-instance-id', 'your-topic');
 
 // Send message
-await producer.send({
-    topic: 'test-topic',
-    body: 'Hello RocketMQ'
+const result = await producer.publishMessage('Hello RocketMQ!', 'demo-tag');
+console.log('Message sent:', result.messageId);
+
+// Create consumer
+const consumer = await client.getConsumer('your-instance-id', 'your-topic', 'your-group');
+
+// Set message handler
+consumer.onMessage(async (message) => {
+    console.log('Received:', message.body);
+    await consumer.ackMessage(message.receiptHandle);
 });
+
+// Start consuming
+consumer.startReceiving();
 ```
 
 ### ES Module
 
 ```javascript
-import { Producer, Consumer } from '@klsakura/rocketmq-native-sdk';
+import { MQClient, MessageProperties } from '@klsakura/rocketmq-native-sdk';
 
-// Create consumer
-const consumer = new Consumer({
-    nameServer: 'localhost:9876',
-    groupName: 'test-consumer',
-    topics: ['test-topic']
-});
+const config = {
+    endpoint: 'your-rocketmq-endpoint',
+    accessKeyId: 'your-access-key-id', 
+    accessKeySecret: 'your-access-key-secret',
+    instanceId: 'your-instance-id'
+};
 
-// Start consuming
-consumer.start();
+const client = new MQClient(config);
+const producer = await client.getProducer('instance-id', 'topic');
+
+// Send message with properties
+const properties = new MessageProperties()
+    .putProperty('source', 'demo')
+    .messageKey('unique-key-001');
+
+await producer.publishMessage(
+    { message: 'Hello from ES Module!' },
+    'demo-tag',
+    properties
+);
 ```
 
-## API
+## API Reference
+
+### MQClient
+
+```javascript
+const client = new MQClient(config);
+```
+
+**Config object:**
+- `endpoint` - RocketMQ endpoint URL
+- `accessKeyId` - Access key ID  
+- `accessKeySecret` - Access key secret
+- `instanceId` - Instance ID
+
+**Methods:**
+- `getProducer(instanceId, topic)` - Create producer
+- `getConsumer(instanceId, topic, groupId, tagExpression)` - Create consumer
+- `healthCheck()` - Health check
 
 ### Producer
 
-- `new Producer(config)` - Create producer instance
-- `producer.send(message)` - Send message
-- `producer.close()` - Close producer
+```javascript
+const producer = await client.getProducer(instanceId, topic);
+```
+
+**Methods:**
+- `publishMessage(body, tag, properties)` - Send normal message
+- `publishOrderedMessage(body, tag, properties, shardingKey)` - Send ordered message  
+- `publishDelayMessage(body, tag, properties, options)` - Send delay message
+- `shutdown()` - Close producer
 
 ### Consumer
 
-- `new Consumer(config)` - Create consumer instance
-- `consumer.start()` - Start consuming messages
-- `consumer.stop()` - Stop consumer
+```javascript
+const consumer = await client.getConsumer(instanceId, topic, groupId);
+```
+
+**Methods:**
+- `onMessage(handler)` - Set message handler
+- `startReceiving(tagExpression)` - Start consuming
+- `ackMessage(receiptHandle)` - Acknowledge message
+- `shutdown()` - Close consumer
+
+### MessageProperties
+
+```javascript
+const properties = new MessageProperties()
+    .putProperty('key', 'value')
+    .messageKey('unique-key')
+    .shardingKey('partition-key')
+    .startDeliverTime(Date.now() + 60000);
+```
 
 ## License
 
