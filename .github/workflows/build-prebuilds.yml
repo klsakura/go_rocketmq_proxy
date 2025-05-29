@@ -61,6 +61,7 @@ jobs:
       uses: actions/setup-go@v4
       with:
         go-version: '1.21'
+        cache-dependency-path: 'cgo/go.sum'
 
     - name: Setup Python (for node-gyp)
       uses: actions/setup-python@v4
