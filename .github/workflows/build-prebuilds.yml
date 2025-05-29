@@ -37,12 +37,6 @@ jobs:
             go_os: linux
             go_arch: amd64
             
-          - platform: linux-arm64
-            os: ubuntu-latest
-            arch: arm64
-            go_os: linux
-            go_arch: arm64
-            
           # Windows builds
           - platform: win32-x64
             os: windows-latest
@@ -81,18 +75,6 @@ jobs:
         python -m pip install setuptools wheel
         # 对于较新的Python版本，安装distutils
         python -c "import distutils" 2>/dev/null || python -m pip install setuptools-distutils || true
-
-    # Linux ARM64 specific setup
-    - name: Setup Linux ARM64 cross-compilation
-      if: matrix.platform == 'linux-arm64'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-        echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-        echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
-        echo "AR=aarch64-linux-gnu-ar" >> $GITHUB_ENV
-        echo "STRIP=aarch64-linux-gnu-strip" >> $GITHUB_ENV
-        echo "LINK=aarch64-linux-gnu-g++" >> $GITHUB_ENV
 
     # Windows specific setup
     - name: Setup Windows build tools
@@ -177,72 +159,8 @@ jobs:
           python3 -c "import distutils; print('distutils available')" || echo "distutils not available"
         fi
         
-        # Set cross-compilation environment for ARM64
-        if [ "${{ matrix.platform }}" = "linux-arm64" ]; then
-          echo "Setting up ARM64 cross-compilation"
-          export CC=aarch64-linux-gnu-gcc
-          export CXX=aarch64-linux-gnu-g++
-          export AR=aarch64-linux-gnu-ar
-          export STRIP=aarch64-linux-gnu-strip
-          export LINK=aarch64-linux-gnu-g++
-          
-          # Configure node-gyp for ARM64
-          npm config set target_arch arm64
-          npm config set target_platform linux
-          npm config set cache /tmp/.npm
-          npm config set build_from_source true
-          
-          # Set GYP environment variables for ARM64
-          export GYP_DEFINES="target_arch=arm64"
-          export npm_config_target_arch=arm64
-          export npm_config_target_platform=linux
-          export npm_config_arch=arm64
-          
-          # Remove problematic flags for ARM64
-          export CFLAGS="-march=armv8-a"
-          export CXXFLAGS="-march=armv8-a"
-          export LDFLAGS=""
-          
-          # Force override any -m64 flags
-          export GYP_DEFINES="$GYP_DEFINES target_arch=arm64 host_arch=x64"
-          export CFLAGS="$CFLAGS -fPIC"
-          export CXXFLAGS="$CXXFLAGS -fPIC"
-          
-          echo "ARM64 environment configured:"
-          echo "CC=$CC"
-          echo "CXX=$CXX"
-          echo "CFLAGS=$CFLAGS"
-          echo "CXXFLAGS=$CXXFLAGS"
-          echo "GYP_DEFINES=$GYP_DEFINES"
-        fi
-        
         echo "Building addon..."
-        if [ "${{ matrix.platform }}" = "linux-arm64" ]; then
-          # For ARM64, use node-gyp directly with specific configuration
-          echo "Configuring for ARM64..."
-          
-          # Create a temporary gyp include file to override settings
-          echo "{" > arm64.gypi
-          echo "  'target_defaults': {" >> arm64.gypi
-          echo "    'cflags!': ['-m64']," >> arm64.gypi
-          echo "    'cflags_cc!': ['-m64']," >> arm64.gypi
-          echo "    'ldflags!': ['-m64']," >> arm64.gypi
-          echo "    'cflags': ['-march=armv8-a', '-fPIC']," >> arm64.gypi
-          echo "    'cflags_cc': ['-march=armv8-a', '-fPIC', '-std=c++14']," >> arm64.gypi
-          echo "    'ldflags': ['-march=armv8-a']" >> arm64.gypi
-          echo "  }" >> arm64.gypi
-          echo "}" >> arm64.gypi
-          
-          ./node_modules/.bin/node-gyp clean
-          ./node_modules/.bin/node-gyp configure --target_arch=arm64 --target_platform=linux -I arm64.gypi
-          echo "Building for ARM64..."
-          ./node_modules/.bin/node-gyp build --target_arch=arm64
-          
-          # Clean up
-          rm -f arm64.gypi
-        else
-          npm run build
-        fi
+        npm run build
         
         echo "Addon built successfully:"
         ls -la build/Release/
@@ -298,7 +216,7 @@ jobs:
         mkdir -p node-client-v2/prebuilds
         
         # Copy all platform builds
-        for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64 win32-x64; do
+        for platform in darwin-arm64 darwin-x64 linux-x64 win32-x64; do
           if [ -d "artifacts/prebuilds-$platform" ]; then
             mkdir -p "node-client-v2/prebuilds/$platform"
             cp -r "artifacts/prebuilds-$platform/"* "node-client-v2/prebuilds/$platform/"
