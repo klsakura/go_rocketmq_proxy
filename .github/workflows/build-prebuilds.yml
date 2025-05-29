@@ -76,12 +76,18 @@ jobs:
         # 对于较新的Python版本，安装distutils
         python -c "import distutils" 2>/dev/null || python -m pip install setuptools-distutils || true
 
-    # Windows specific setup
-    - name: Setup Windows build tools
+    # Windows specific setup - 使用现代方法
+    - name: Setup Windows build environment
       if: runner.os == 'Windows'
+      shell: bash
       run: |
-        npm install --global windows-build-tools --vs2015
-      continue-on-error: true
+        echo "Setting up Windows build environment..."
+        # 确保使用正确的Python版本
+        python --version
+        # 设置npm配置以使用正确的Python
+        npm config set python python
+        npm config set msvs_version 2022
+        echo "Windows build environment ready"
 
     - name: Install dependencies
       run: |
