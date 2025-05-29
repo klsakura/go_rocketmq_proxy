@@ -1,11 +1,25 @@
-#include "rocketmq_addon.h"
+// Windows API 冲突保护 - 必须最先处理
 #ifdef _WIN32
-#include <windows.h>
-#else
-#include <dlfcn.h>
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
 #endif
+// 在包含任何头文件之前禁用Windows宏
+#ifdef SendMessage
+#undef SendMessage
+#endif
+#endif
+
+#include "rocketmq_addon.h"
 #include <iostream>
 #include <sstream>
+
+// 在所有其他包含之后再次禁用可能的宏冲突
+#ifdef _WIN32
+#ifdef SendMessage
+#undef SendMessage
+#endif
+#endif
 
 namespace rocketmq_addon
 {
@@ -47,8 +61,9 @@ namespace rocketmq_addon
         }
 
 #ifdef _WIN32
-        // Windows路径
+        // Windows路径 - 添加prebuilds目录
         const char *lib_paths[] = {
+            "..\\prebuilds\\win32-x64\\librocketmq_cgo.dll",
             ".\\librocketmq_cgo.dll",
             "..\\cgo\\librocketmq_cgo.dll",
             "librocketmq_cgo.dll",

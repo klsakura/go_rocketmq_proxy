@@ -1,11 +1,33 @@
 #ifndef ROCKETMQ_ADDON_H
 #define ROCKETMQ_ADDON_H
 
+// Windows API 冲突保护 - 必须在所有其他include之前
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+// 防止Windows.h中的SendMessage宏冲突
+#ifdef SendMessage
+#undef SendMessage
+#endif
+#endif
+
 #include <napi.h>
 #include <string>
 #include <map>
 #include <memory>
 #include <functional>
+
+#ifdef _WIN32
+#include <windows.h>
+// 重新禁用可能的宏冲突
+#ifdef SendMessage
+#undef SendMessage
+#endif
+#else
+#include <dlfcn.h>
+#endif
 
 // Go CGO库的C接口声明
 extern "C"
