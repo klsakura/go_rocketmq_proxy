@@ -88,9 +88,9 @@ jobs:
         # 获取Python路径
         PYTHON_PATH=$(which python)
         echo "Python path: $PYTHON_PATH"
-        # 设置npm配置以使用正确的Python
-        npm config set python "$PYTHON_PATH"
-        npm config set msvs_version 2022
+        # 设置环境变量而不是npm config (npm v9+不再支持npm config set python)
+        echo "npm_config_python=$PYTHON_PATH" >> $GITHUB_ENV
+        echo "PYTHON=$PYTHON_PATH" >> $GITHUB_ENV
         echo "Windows build environment ready"
 
     - name: Install dependencies
