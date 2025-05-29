@@ -5,7 +5,8 @@ name: Build Prebuilt Binaries
 # - Built with Node.js 16.19.0 for optimal compatibility with Node.js 16+
 # - Native addons built with Node.js 16.19.0 are compatible with Node.js 16-22
 # - Full Apple Silicon support and modern JavaScript features
-# - Using NAN for Native Addon abstraction layer
+# - Using Node-API (N-API) for maximum cross-version compatibility
+# - MODULE_VERSION 93 (Node.js 16.x) for maximum compatibility
 
 on:
   push:
@@ -24,7 +25,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS builds
+          # macOS builds - Node.js 16.19.0 for MODULE_VERSION 93
           - platform: darwin-arm64
             os: macos-latest
             arch: arm64
@@ -39,7 +40,7 @@ jobs:
             go_arch: amd64
             node-version: '16.19.0'
             
-          # Linux builds
+          # Linux builds - Node.js 16.19.0 for MODULE_VERSION 93
           - platform: linux-x64
             os: ubuntu-latest
             arch: x64
@@ -47,7 +48,7 @@ jobs:
             go_arch: amd64
             node-version: '16.19.0'
             
-          # Windows builds
+          # Windows builds - Node.js 16.19.0 for MODULE_VERSION 93
           - platform: win32-x64
             os: windows-latest
             arch: x64
@@ -78,6 +79,18 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
+
+    # 验证Node.js版本，确保编译正确
+    - name: Verify Node.js version
+      run: |
+        echo "=== Node.js Environment Verification ==="
+        node --version
+        npm --version
+        echo "Expected Node.js version: ${{ matrix.node-version }}"
+        echo "MODULE_VERSION should be 93 for Node.js 16.x"
+        node -p "process.versions.modules"
+        echo "Platform: ${{ matrix.platform }}"
+        echo "========================================"
 
     # 安装Python依赖，修复distutils问题
     - name: Install Python dependencies
@@ -168,6 +181,18 @@ jobs:
         echo "=== Building Node.js addon for ${{ matrix.platform }} ==="
         cd addon
         
+        # 验证Node.js MODULE_VERSION
+        echo "=== Pre-build Node.js Verification ==="
+        echo "Node.js version: $(node --version)"
+        echo "MODULE_VERSION: $(node -p 'process.versions.modules')"
+        if [ "$(node -p 'process.versions.modules')" != "93" ]; then
+          echo "❌ ERROR: Expected MODULE_VERSION 93 (Node.js 16.x), got $(node -p 'process.versions.modules')"
+          echo "This will cause ABI compatibility issues!"
+          exit 1
+        fi
+        echo "✅ Correct MODULE_VERSION 93 detected"
+        echo "========================================="
+        
         # 验证Python环境
         echo "Python version:"
         if [ "${{ runner.os }}" = "Windows" ]; then
@@ -186,6 +211,19 @@ jobs:
         echo "Addon built successfully:"
         ls -la build/Release/
         file build/Release/rocketmq_addon.node
+        
+        # 验证编译结果的MODULE_VERSION
+        echo "=== Post-build Binary Verification ==="
+        node -e "
+          try {
+            const addon = require('./build/Release/rocketmq_addon.node');
+            console.log('✅ Addon loads successfully with MODULE_VERSION 93');
+            console.log('✅ Exported classes:', Object.keys(addon));
+          } catch (err) {
+            console.log('❌ Addon loading failed:', err.message);
+            process.exit(1);
+          }
+        "
         
         # Copy to prebuilds directory
         mkdir -p ../node-client-v2/prebuilds/${{ matrix.platform }}

@@ -1,6 +1,6 @@
 {
     "name": "@klsakura/rocketmq-native-sdk",
-    "version": "0.0.1",
+    "version": "0.0.5",
     "description": "High-performance Node.js client SDK for RocketMQ with Native Addon support (Node.js 16+)",
     "main": "dist/index.js",
     "module": "dist/index.mjs",

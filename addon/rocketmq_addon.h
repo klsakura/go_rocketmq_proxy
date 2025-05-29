@@ -1,10 +1,7 @@
 #ifndef ROCKETMQ_ADDON_H
 #define ROCKETMQ_ADDON_H
 
-#include <node.h>
-#include <node_object_wrap.h>
-#include <v8.h>
-#include <uv.h>
+#include <napi.h>
 #include <string>
 #include <map>
 #include <memory>
@@ -31,11 +28,11 @@ extern "C"
 namespace rocketmq_addon
 {
 
-    // 消息处理器包装类
+    // 消息处理器包装类 - 使用Node-API获得更好的ABI稳定性
     class MessageHandlerWrapper
     {
     public:
-        MessageHandlerWrapper(v8::Isolate *isolate, v8::Local<v8::Function> callback);
+        MessageHandlerWrapper(Napi::Env env, Napi::Function callback);
         ~MessageHandlerWrapper();
 
         void HandleMessage(const char *messageJson);
@@ -45,34 +42,33 @@ namespace rocketmq_addon
         static std::string current_consumer_id_;
 
     private:
-        v8::Isolate *isolate_;
-        v8::Persistent<v8::Function> callback_;
+        Napi::Env env_;
+        Napi::FunctionReference callback_;
     };
 
-    // RocketMQ客户端包装类
-    class RocketMQClient : public node::ObjectWrap
+    // RocketMQ客户端包装类 - 继承自Napi::ObjectWrap以获得跨版本兼容性
+    class RocketMQClient : public Napi::ObjectWrap<RocketMQClient>
     {
     public:
-        static void Init(v8::Local<v8::Object> exports);
-        static void NewInstance(const v8::FunctionCallbackInfo<v8::Value> &args);
+        static Napi::Object Init(Napi::Env env, Napi::Object exports);
+        static Napi::Value NewInstance(const Napi::CallbackInfo &info);
 
-    private:
-        explicit RocketMQClient();
+        RocketMQClient(const Napi::CallbackInfo &info);
         ~RocketMQClient();
 
-        static void New(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void InitRocketMQ(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void CreateProducer(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void SendMessage(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void SendOrderedMessage(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void CreateConsumer(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void StartConsumer(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void RegisterMessageHandler(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void AckMessage(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void ShutdownProducer(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void ShutdownConsumer(const v8::FunctionCallbackInfo<v8::Value> &args);
+    private:
+        static Napi::FunctionReference constructor;
 
-        static v8::Persistent<v8::Function> constructor;
+        Napi::Value InitRocketMQ(const Napi::CallbackInfo &info);
+        Napi::Value CreateProducer(const Napi::CallbackInfo &info);
+        Napi::Value SendMessage(const Napi::CallbackInfo &info);
+        Napi::Value SendOrderedMessage(const Napi::CallbackInfo &info);
+        Napi::Value CreateConsumer(const Napi::CallbackInfo &info);
+        Napi::Value StartConsumer(const Napi::CallbackInfo &info);
+        Napi::Value RegisterMessageHandler(const Napi::CallbackInfo &info);
+        Napi::Value AckMessage(const Napi::CallbackInfo &info);
+        Napi::Value ShutdownProducer(const Napi::CallbackInfo &info);
+        Napi::Value ShutdownConsumer(const Napi::CallbackInfo &info);
 
         std::string config_json_;
         std::map<std::string, std::string> producers_;
@@ -80,45 +76,43 @@ namespace rocketmq_addon
         std::map<std::string, std::shared_ptr<MessageHandlerWrapper>> message_handlers_;
     };
 
-    // 生产者包装类
-    class Producer : public node::ObjectWrap
+    // 生产者包装类 - 使用Node-API确保跨Node.js版本的ABI兼容性
+    class Producer : public Napi::ObjectWrap<Producer>
     {
     public:
-        static void Init(v8::Local<v8::Object> exports);
-        static void NewInstance(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static v8::Persistent<v8::Function> constructor;
+        static Napi::Object Init(Napi::Env env, Napi::Object exports);
+        static Napi::Value NewInstance(const Napi::CallbackInfo &info);
+        static Napi::FunctionReference constructor;
 
-    private:
-        explicit Producer(const std::string &producer_id, const std::string &topic);
+        Producer(const Napi::CallbackInfo &info);
         ~Producer();
 
-        static void New(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void PublishMessage(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void PublishOrderedMessage(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void PublishDelayMessage(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void Shutdown(const v8::FunctionCallbackInfo<v8::Value> &args);
+    private:
+        Napi::Value PublishMessage(const Napi::CallbackInfo &info);
+        Napi::Value PublishOrderedMessage(const Napi::CallbackInfo &info);
+        Napi::Value PublishDelayMessage(const Napi::CallbackInfo &info);
+        Napi::Value Shutdown(const Napi::CallbackInfo &info);
 
         std::string producer_id_;
         std::string topic_;
     };
 
-    // 消费者包装类
-    class Consumer : public node::ObjectWrap
+    // 消费者包装类 - 基于Node-API以避免V8 ABI依赖问题
+    class Consumer : public Napi::ObjectWrap<Consumer>
     {
     public:
-        static void Init(v8::Local<v8::Object> exports);
-        static void NewInstance(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static v8::Persistent<v8::Function> constructor;
+        static Napi::Object Init(Napi::Env env, Napi::Object exports);
+        static Napi::Value NewInstance(const Napi::CallbackInfo &info);
+        static Napi::FunctionReference constructor;
 
-    private:
-        explicit Consumer(const std::string &consumer_id, const std::string &topic, const std::string &group_id);
+        Consumer(const Napi::CallbackInfo &info);
         ~Consumer();
 
-        static void New(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void OnMessage(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void StartReceiving(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void AckMessage(const v8::FunctionCallbackInfo<v8::Value> &args);
-        static void Shutdown(const v8::FunctionCallbackInfo<v8::Value> &args);
+    private:
+        Napi::Value OnMessage(const Napi::CallbackInfo &info);
+        Napi::Value StartReceiving(const Napi::CallbackInfo &info);
+        Napi::Value AckMessage(const Napi::CallbackInfo &info);
+        Napi::Value Shutdown(const Napi::CallbackInfo &info);
 
         std::string consumer_id_;
         std::string topic_;
@@ -126,11 +120,11 @@ namespace rocketmq_addon
         std::shared_ptr<MessageHandlerWrapper> message_handler_;
     };
 
-    // 工具函数
-    std::string V8StringToStdString(v8::Isolate *isolate, v8::Local<v8::Value> value);
-    v8::Local<v8::String> StdStringToV8String(v8::Isolate *isolate, const std::string &str);
-    v8::Local<v8::Object> JsonStringToV8Object(v8::Isolate *isolate, const std::string &json_str);
-    std::string V8ObjectToJsonString(v8::Isolate *isolate, v8::Local<v8::Object> obj);
+    // 工具函数 - 使用Node-API类型以保证跨版本稳定性
+    std::string NapiStringToStdString(const Napi::String &napiStr);
+    Napi::String StdStringToNapiString(Napi::Env env, const std::string &str);
+    Napi::Object JsonStringToNapiObject(Napi::Env env, const std::string &json_str);
+    std::string NapiObjectToJsonString(const Napi::Object &obj);
 
 } // namespace rocketmq_addon
 

@@ -2,7 +2,7 @@
 
 ## 🎯 实现目标
 
-将RocketMQ Native SDK改造为支持多平台预编译二进制文件的npm包，解决跨平台兼容性问题。
+将RocketMQ Native SDK改造为支持多平台预编译二进制文件的npm包，解决跨平台兼容性问题。采用**Node-API (N-API)**确保跨Node.js版本的ABI稳定性。
 
 ## ✅ 已完成的工作
 
@@ -17,6 +17,7 @@
 - ✅ 动态加载对应平台的预编译二进制文件
 - ✅ 智能错误处理和用户指导
 - ✅ 支持5个主流平台组合
+- ✅ **Node-API兼容性检查** - 确保ABI稳定性
 
 ### 2. 预编译二进制文件结构
 
@@ -33,7 +34,12 @@ node-client-v2/prebuilds/
 
 #### 文件类型说明
 - **Go共享库**: `.dylib` (macOS), `.so` (Linux), `.dll` (Windows)
-- **Node.js Addon**: `.node` (所有平台统一)
+- **Node.js Addon**: `.node` (所有平台统一) - **使用Node-API构建**
+
+#### ABI兼容性保证
+- **Node-API (N-API)**: 提供稳定的ABI，不依赖V8内部API
+- **跨版本兼容**: 无需针对不同Node.js版本重新编译
+- **未来兼容**: 不受V8引擎更新影响
 
 ### 3. 多平台构建系统
 
@@ -44,11 +50,16 @@ node-client-v2/prebuilds/
 
 #### 构建命令
 ```bash
-npm run build:platforms        # 构建当前平台
+npm run build:platforms        # 使用对应Node.js Headers构建当前平台
 npm run build:platforms:all    # 构建所有平台 (需要对应环境)
-npm run build:platforms:check  # 检查构建状态
+npm run build:platforms:check  # 检查构建状态和ABI兼容性
 npm run build:platforms:go     # 只构建Go库
 ```
+
+#### 构建技术要点
+- **Header解析**: 自动获取对应Node.js版本的Headers
+- **Node-API绑定**: 使用`node-addon-api`确保ABI稳定性
+- **CGO编译**: Go共享库与C++原生模块的无缝集成
 
 ### 4. GitHub Actions CI/CD
 
@@ -64,6 +75,7 @@ npm run build:platforms:go     # 只构建Go库
 - 自动上传各平台构建产物
 - 合并所有平台到统一包
 - 支持版本标签自动发布
+- **ABI版本验证**: 确保Node-API兼容性
 
 ### 5. 发布和质量保证
 

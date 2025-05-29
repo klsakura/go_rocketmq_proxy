@@ -1,7 +1,14 @@
 import * as path from 'path';
 
-// 导入平台加载器
-const { loadNativeAddon } = require('./platform-loader');
+// 动态导入平台加载器（支持ESM和CommonJS）
+let loadNativeAddon: () => any;
+try {
+    // 尝试使用require (CommonJS)
+    loadNativeAddon = require('./platform-loader').loadNativeAddon;
+} catch (e) {
+    // 如果require失败，将在运行时使用动态import (ESM)
+    loadNativeAddon = null as any;
+}
 
 // 接口定义
 export interface MQConfig {
@@ -82,11 +89,17 @@ class NativeClient {
 
     constructor(config: MQConfig) {
         this.config = config;
-        this.initNativeClient();
     }
 
-    private initNativeClient() {
+    public async initNativeClient() {
         try {
+            // 如果是ESM环境，使用动态导入
+            if (!loadNativeAddon) {
+                // @ts-ignore - 动态导入平台加载器
+                const module = await import('./platform-loader.js');
+                loadNativeAddon = module.loadNativeAddon;
+            }
+
             // 使用平台加载器加载Native Addon
             const addon = loadNativeAddon();
             this.nativeClient = new addon.RocketMQClient();
@@ -269,53 +282,54 @@ class NativeConsumer extends Consumer {
 // 主客户端类
 export class MQClient {
     private client: NativeClient;
+    private initialized: boolean = false;
 
     constructor(config: MQConfig) {
-        // 验证必需的配置参数
-        if (!config.endpoint) {
-            throw new Error('endpoint is required');
-        }
-        if (!config.accessKeyId) {
-            throw new Error('accessKeyId is required');
-        }
-        if (!config.accessKeySecret) {
-            throw new Error('accessKeySecret is required');
-        }
-        if (!config.instanceId) {
-            throw new Error('instanceId is required');
-        }
-
         this.client = new NativeClient(config);
     }
 
+    private async ensureInitialized() {
+        if (!this.initialized) {
+            await this.client.initNativeClient();
+            this.initialized = true;
+        }
+    }
+
+    /**
+     * 创建生产者
+     * @param instanceId 实例ID
+     * @param topic 主题
+     * @returns 生产者实例
+     */
     async getProducer(instanceId: string, topic: string): Promise<Producer> {
-        if (!instanceId) {
-            throw new Error('instanceId is required');
-        }
-        if (!topic) {
-            throw new Error('topic is required');
-        }
+        await this.ensureInitialized();
         return this.client.getProducer(instanceId, topic);
     }
 
+    /**
+     * 创建消费者
+     * @param instanceId 实例ID
+     * @param topic 主题
+     * @param groupId 消费者组ID
+     * @param tagExpression 标签表达式 (默认为'*')
+     * @returns 消费者实例
+     */
     async getConsumer(instanceId: string, topic: string, groupId: string, tagExpression: string = '*'): Promise<Consumer> {
-        if (!instanceId) {
-            throw new Error('instanceId is required');
-        }
-        if (!topic) {
-            throw new Error('topic is required');
-        }
-        if (!groupId) {
-            throw new Error('groupId is required');
-        }
+        await this.ensureInitialized();
         return this.client.getConsumer(instanceId, topic, groupId, tagExpression);
     }
 
+    /**
+     * 健康检查
+     */
     async healthCheck(): Promise<any> {
+        await this.ensureInitialized();
         return this.client.healthCheck();
     }
 
-    // 获取当前使用的模式
+    /**
+     * 获取客户端模式
+     */
     getMode(): string {
         return 'native';
     }

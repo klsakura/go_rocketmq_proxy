@@ -2,12 +2,35 @@
 
 🚀 **High-performance Node.js client SDK for Apache RocketMQ with Pure Native Addon support.**
 
+## 🎯 最新更新 - Node-API 迁移完成
+
+**✅ 已完成从NAN到Node-API的迁移！**
+
+根据社区建议，我们已经成功将原生模块从传统的NAN (Native Abstractions for Node.js) 迁移到现代的 **Node-API (N-API)**，获得以下重要改进：
+
+### 🔧 技术改进
+- **ABI稳定性**: 使用Node-API提供的稳定C ABI，不再依赖V8内部API
+- **跨版本兼容**: 一次构建，支持Node.js 12+所有版本，无需重新编译
+- **未来兼容**: 不受V8引擎更新影响，确保长期稳定性
+- **准确术语**: 使用"用对应版本的Node.js Headers来构建原生模块"而非简单的"编译"
+
+### 📊 兼容性对比
+
+| 特性 | 传统NAN方式 | Node-API方式 |
+|------|-------------|-------------|
+| **V8依赖** | 强依赖V8内部API | 无V8依赖 |
+| **跨版本兼容** | 需针对每版本重新编译 | 一次构建，多版本运行 |
+| **ABI稳定性** | V8 ABI变化时破坏 | 稳定的C ABI |
+| **维护成本** | 高（多版本二进制） | 低（单一二进制） |
+
+详细技术文档请参考：[NODE_API_MIGRATION_GUIDE.md](NODE_API_MIGRATION_GUIDE.md)
+
 ## 🏗️ Architecture
 
-This project provides a **pure Native Addon** implementation for maximum performance:
+This project provides a **pure Native Addon** implementation using **Node-API (N-API)** for maximum performance and cross-version compatibility:
 
 ```
-Node.js App → Native SDK → C++ Addon → Go Shared Library → RocketMQ
+Node.js App → Native SDK → C++ Addon (Node-API) → Go Shared Library → RocketMQ
 ```
 
 ### Performance Benefits
@@ -16,6 +39,12 @@ Node.js App → Native SDK → C++ Addon → Go Shared Library → RocketMQ
 - **30% less memory usage**
 - **40% less CPU usage**
 - **80% fewer dependencies**
+
+### ABI Compatibility
+- **Node-API (N-API)** ensures **stable ABI** across Node.js versions
+- **No dependency on V8 internal APIs** - immune to V8 ABI breakage
+- **Cross-version compatibility** without recompilation
+- **Future-proof** against Node.js updates
 
 ## 🔧 Cross-Platform Support
 
@@ -30,26 +59,39 @@ npm run check:platform
 ```
 
 ### Build Requirements
-- **Go 1.21+** - for CGO shared library
-- **Node.js 12+** - for Native Addon
-- **C++ Compiler**:
+- **Go 1.21+** - for CGO shared library compilation
+- **Node.js 12+** - for Native Addon with Node-API support
+- **C++ Compiler** - for building native modules with corresponding Node.js headers:
   - macOS: `xcode-select --install`
   - Linux: `sudo apt-get install build-essential`
   - Windows: Visual Studio Build Tools
 
 ### Build Commands
 ```bash
-# Install and auto-build
+# Install and auto-build native modules with Node.js headers
 npm install
 
 # Manual build (all platforms)
 npm run build:all
 
-# Step by step
-npm run build:go     # Build Go shared library
-npm run build:addon  # Build C++ Native Addon  
+# Step by step - building native modules with platform-specific headers
+npm run build:go     # Build Go shared library with CGO
+npm run build:addon  # Build C++ Native Addon with Node.js headers
 npm run build:ts     # Build TypeScript SDK
 ```
+
+### Technical Notes
+
+#### Native Module Compilation Process
+When building native modules, the process involves:
+1. **Header Resolution**: Using corresponding Node.js version headers
+2. **Node-API Binding**: Leveraging N-API for ABI stability
+3. **Platform Libraries**: Linking with platform-specific shared libraries
+
+#### ABI Compatibility Strategy
+- **Node-API (N-API)** provides **stable ABI** independent of V8 versions
+- **Traditional nan/V8 direct APIs** are prone to ABI breakage across Node.js versions
+- **Recommended approach**: Use `node-addon-api` or `napi.h` for maximum cross-version compatibility
 
 ### Verify Build
 ```bash
