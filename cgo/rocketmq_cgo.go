@@ -335,6 +335,8 @@ func CreateConsumer(configJson *C.char, topic *C.char, groupId *C.char, tagExpre
 	result := map[string]interface{}{
 		"success":    true,
 		"consumerId": consumerId,
+		"topic":      topicStr,
+		"groupId":    groupIdStr,
 		"message":    "Consumer created successfully",
 	}
 
