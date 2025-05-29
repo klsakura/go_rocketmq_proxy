@@ -1,8 +1,8 @@
 name: Build Prebuilt Binaries
 
 # Node.js Compatibility:
-# - Built with Node.js 14 for optimal compatibility with Node.js 12.20.0+
-# - Native addons built with Node.js 14 are compatible with Node.js 12-20
+# - Built with Node.js 14 for optimal compatibility with Node.js 14+
+# - Native addons built with Node.js 14 are compatible with Node.js 14-20
 # - Using NAN for Native Addon abstraction layer
 
 on:

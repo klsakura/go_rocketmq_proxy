@@ -2,15 +2,14 @@
 
 ## Minimum Requirements
 
-**Minimum Node.js Version: 12.20.0**
+**Minimum Node.js Version: 14.0.0**
 
-This SDK is designed to support Node.js 12+ with the following compatibility considerations:
+This SDK is designed to support Node.js 14+ with the following compatibility considerations:
 
 ## ✅ What's Compatible
 
 ### Runtime Requirements
-- **Node.js 12.20.0+** - Minimum supported version
-- **Node.js 14.x** - Full support
+- **Node.js 14.0.0+** - Minimum supported version
 - **Node.js 16.x** - Full support  
 - **Node.js 18.x** - Full support
 - **Node.js 20.x** - Full support
@@ -26,7 +25,7 @@ This SDK is designed to support Node.js 12+ with the following compatibility con
 ### TypeScript Compilation
 ```json
 {
-  "target": "es2018",    // Compatible with Node.js 12+
+  "target": "es2018",    // Compatible with Node.js 14+
   "module": "commonjs"   // Primary module format
 }
 ```
@@ -47,19 +46,19 @@ This SDK is designed to support Node.js 12+ with the following compatibility con
 2. **ESM Support**: Limited in Node.js 12, prefer CommonJS
 
 ### Recommendations
-- **Node.js 14+**: Recommended for production
+- **Node.js 14+**: Minimum requirement
 - **Node.js 16+**: Best experience with full ESM support
 
 ## 📦 Installation
 
-### For Node.js 12+
+### For Node.js 14+
 ```bash
 npm install @klsakura/rocketmq-native-sdk
 ```
 
 ### Usage Examples
 
-#### CommonJS (Node.js 12+)
+#### CommonJS (Node.js 14+)
 ```javascript
 const { Producer, Consumer } = require('@klsakura/rocketmq-native-sdk');
 ```
@@ -77,8 +76,8 @@ You can check compatibility at runtime:
 const nodeVersion = process.versions.node;
 const majorVersion = parseInt(nodeVersion.split('.')[0]);
 
-if (majorVersion < 12) {
-    console.error('Node.js 12+ required');
+if (majorVersion < 14) {
+    console.error('Node.js 14+ required');
     process.exit(1);
 }
 
@@ -88,31 +87,31 @@ console.log(`✅ Node.js ${nodeVersion} is supported`);
 ## 🛠️ Development
 
 ### Building from Source
-- **Node.js 14+**: Recommended for development
+- **Node.js 14+**: Required for development
 - **Python 3.x**: Required for native compilation
 - **C++ Compiler**: Platform-specific requirements
 
 ### Testing Compatibility
 ```bash
 # Test with different Node.js versions using nvm
-nvm use 12
-npm test
-
-nvm use 14  
+nvm use 14
 npm test
 
 nvm use 16
+npm test
+
+nvm use 18
 npm test
 ```
 
 ## 📊 Platform Support Matrix
 
-| Platform       | Node.js 12 | Node.js 14 | Node.js 16 | Node.js 18 | Node.js 20 |
-|---------------|------------|------------|------------|------------|------------|
-| macOS arm64   | ✅         | ✅         | ✅         | ✅         | ✅         |
-| macOS x64     | ✅         | ✅         | ✅         | ✅         | ✅         |
-| Linux x64     | ✅         | ✅         | ✅         | ✅         | ✅         |
-| Windows x64   | ✅         | ✅         | ✅         | ✅         | ✅         |
+| Platform       | Node.js 14 | Node.js 16 | Node.js 18 | Node.js 20 |
+|---------------|------------|------------|------------|------------|
+| macOS arm64   | ✅         | ✅         | ✅         | ✅         |
+| macOS x64     | ✅         | ✅         | ✅         | ✅         |
+| Linux x64     | ✅         | ✅         | ✅         | ✅         |
+| Windows x64   | ✅         | ✅         | ✅         | ✅         |
 
 ## 🐛 Troubleshooting
 
@@ -120,12 +119,6 @@ npm test
 ```bash
 # Rebuild for your Node.js version
 npm rebuild @klsakura/rocketmq-native-sdk
-```
-
-### ESM Import Issues (Node.js 12)
-```javascript
-// Use CommonJS instead
-const sdk = require('@klsakura/rocketmq-native-sdk');
 ```
 
 ### Platform Detection Issues
