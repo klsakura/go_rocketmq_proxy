@@ -1,5 +1,10 @@
 name: Build Prebuilt Binaries
 
+# Node.js Compatibility:
+# - Built with Node.js 14 for optimal compatibility with Node.js 12.20.0+
+# - Native addons built with Node.js 14 are compatible with Node.js 12-20
+# - Using NAN for Native Addon abstraction layer
+
 on:
   push:
     branches: [ main, develop ]
@@ -10,7 +15,7 @@ on:
 
 jobs:
   build:
-    name: Build ${{ matrix.platform }}
+    name: Build ${{ matrix.platform }}-node${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
     
     strategy:
@@ -23,12 +28,14 @@ jobs:
             arch: arm64
             go_os: darwin
             go_arch: arm64
+            node-version: '14'
             
           - platform: darwin-x64
             os: macos-latest
             arch: x64
             go_os: darwin
             go_arch: amd64
+            node-version: '14'
             
           # Linux builds
           - platform: linux-x64
@@ -36,6 +43,7 @@ jobs:
             arch: x64
             go_os: linux
             go_arch: amd64
+            node-version: '14'
             
           # Windows builds
           - platform: win32-x64
@@ -43,6 +51,7 @@ jobs:
             arch: x64
             go_os: windows
             go_arch: amd64
+            node-version: '14'
 
     steps:
     - name: Checkout code
@@ -51,7 +60,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: ${{ matrix.node-version }}
         cache: 'npm'
         cache-dependency-path: |
           node-client-v2/package-lock.json
@@ -202,7 +211,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: prebuilds-${{ matrix.platform }}
+        name: prebuilds-${{ matrix.platform }}-node${{ matrix.node-version }}
         path: node-client-v2/prebuilds/${{ matrix.platform }}/
         retention-days: 30
 
@@ -225,14 +234,14 @@ jobs:
       run: |
         mkdir -p node-client-v2/prebuilds
         
-        # Copy all platform builds
+        # Copy all platform builds for Node.js 14
         for platform in darwin-arm64 darwin-x64 linux-x64 win32-x64; do
-          if [ -d "artifacts/prebuilds-$platform" ]; then
+          if [ -d "artifacts/prebuilds-$platform-node14" ]; then
             mkdir -p "node-client-v2/prebuilds/$platform"
-            cp -r "artifacts/prebuilds-$platform/"* "node-client-v2/prebuilds/$platform/"
-            echo "✅ Copied $platform prebuilds"
+            cp -r "artifacts/prebuilds-$platform-node14/"* "node-client-v2/prebuilds/$platform/"
+            echo "✅ Copied $platform prebuilds (Node.js 14)"
           else
-            echo "⚠️  Missing $platform prebuilds"
+            echo "⚠️  Missing $platform prebuilds (Node.js 14)"
           fi
         done
         
@@ -242,7 +251,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '14'
 
     - name: Build TypeScript SDK
       run: |

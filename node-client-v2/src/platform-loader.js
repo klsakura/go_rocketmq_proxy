@@ -3,6 +3,34 @@ const path = require('path');
 const fs = require('fs');
 
 /**
+ * 检查Node.js版本兼容性
+ */
+function checkNodeVersionCompatibility() {
+    const nodeVersion = process.versions.node;
+    const majorVersion = parseInt(nodeVersion.split('.')[0]);
+    const minorVersion = parseInt(nodeVersion.split('.')[1]);
+
+    // 检查最低版本要求：Node.js 12.20.0
+    if (majorVersion < 12 || (majorVersion === 12 && minorVersion < 20)) {
+        throw new Error(
+            `Node.js version ${nodeVersion} is not supported.\n` +
+            `Minimum required version: 12.20.0\n` +
+            `Please upgrade Node.js: https://nodejs.org/`
+        );
+    }
+
+    // 显示兼容性信息
+    console.log(`✅ Node.js ${nodeVersion} is compatible with RocketMQ Native SDK`);
+
+    return {
+        version: nodeVersion,
+        majorVersion,
+        minorVersion,
+        isSupported: true
+    };
+}
+
+/**
  * 获取当前平台信息
  */
 function getPlatformInfo() {
@@ -63,6 +91,9 @@ function isSupportedPlatform(platformKey) {
  * 加载Native Addon
  */
 function loadNativeAddon() {
+    // 首先检查Node.js版本兼容性
+    checkNodeVersionCompatibility();
+
     const platformInfo = getPlatformInfo();
     const { platformKey } = platformInfo;
 
@@ -136,6 +167,7 @@ function getAllPlatformInfo() {
 }
 
 module.exports = {
+    checkNodeVersionCompatibility,
     getPlatformInfo,
     getPlatformPaths,
     getGoLibName,
