@@ -9,9 +9,9 @@ name: Build Prebuilt Binaries
 # - MODULE_VERSION 93 (Node.js 16.x) for maximum compatibility
 # 
 # GLIBC Compatibility:
-# - Linux builds use ubuntu-20.04 (GLIBC 2.31) for maximum compatibility
+# - Linux builds use Ubuntu 20.04 container on ubuntu-latest runner (GLIBC 2.31)
 # - This ensures binaries work on older systems including 字节云 VCI (GLIBC 2.31)
-# - Ubuntu 20.04 provides GLIBC 2.31 which is compatible with most production environments
+# - Avoids Ubuntu 20.04 runner deprecation while maintaining compatibility
 
 on:
   push:
@@ -25,6 +25,7 @@ jobs:
   build:
     name: Build ${{ matrix.platform }}-node${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     
     strategy:
       fail-fast: false
@@ -33,6 +34,7 @@ jobs:
           # macOS builds - Node.js 16.19.0 for MODULE_VERSION 93
           - platform: darwin-arm64
             os: macos-latest
+            container: null
             arch: arm64
             go_os: darwin
             go_arch: arm64
@@ -40,14 +42,16 @@ jobs:
             
           - platform: darwin-x64
             os: macos-latest
+            container: null
             arch: x64
             go_os: darwin
             go_arch: amd64
             node-version: '16.19.0'
             
-          # Linux builds - Node.js 16.19.0 for MODULE_VERSION 93 - 使用 ubuntu-20.04 以确保 GLIBC 2.31 兼容性
+          # Linux builds - 使用 Ubuntu 20.04 容器确保 GLIBC 2.31 兼容性
           - platform: linux-x64
-            os: ubuntu-20.04
+            os: ubuntu-latest
+            container: ubuntu:20.04
             arch: x64
             go_os: linux
             go_arch: amd64
@@ -56,6 +60,7 @@ jobs:
           # Windows builds - Node.js 16.19.0 for MODULE_VERSION 93
           - platform: win32-x64
             os: windows-latest
+            container: null
             arch: x64
             go_os: windows
             go_arch: amd64
@@ -65,7 +70,49 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup Node.js
+    # Linux container setup - 安装必要的依赖
+    - name: Setup Linux container environment
+      if: matrix.container == 'ubuntu:20.04'
+      run: |
+        echo "=== Setting up Ubuntu 20.04 container environment ==="
+        # 更新包管理器
+        apt-get update
+        
+        # 安装基础依赖
+        apt-get install -y \
+          curl \
+          wget \
+          git \
+          build-essential \
+          python3 \
+          python3-pip \
+          python3-setuptools \
+          python3-distutils \
+          ca-certificates \
+          gnupg \
+          lsb-release
+        
+        # 安装 Node.js 16.19.0
+        curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
+        apt-get install -y nodejs=16.19.0-1nodesource1
+        
+        # 锁定 Node.js 版本
+        apt-mark hold nodejs
+        
+        # 验证 Node.js 版本
+        echo "Node.js version: $(node --version)"
+        echo "npm version: $(npm --version)"
+        echo "MODULE_VERSION: $(node -p 'process.versions.modules')"
+        
+        # 安装 Go 1.21
+        wget -q https://go.dev/dl/go1.21.13.linux-amd64.tar.gz
+        tar -C /usr/local -xzf go1.21.13.linux-amd64.tar.gz
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+        
+        echo "=== Container environment setup complete ==="
+
+    - name: Setup Node.js (non-Linux)
+      if: matrix.container != 'ubuntu:20.04'
       uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node-version }}
@@ -74,13 +121,15 @@ jobs:
           node-client-v2/package-lock.json
           addon/package-lock.json
 
-    - name: Setup Go
+    - name: Setup Go (non-Linux)
+      if: matrix.container != 'ubuntu:20.04'
       uses: actions/setup-go@v4
       with:
         go-version: '1.21'
         cache-dependency-path: 'cgo/go.sum'
 
-    - name: Setup Python (for node-gyp)
+    - name: Setup Python (for node-gyp, non-Linux)
+      if: matrix.container != 'ubuntu:20.04'
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
@@ -95,10 +144,15 @@ jobs:
         echo "MODULE_VERSION should be 93 for Node.js 16.x"
         node -p "process.versions.modules"
         echo "Platform: ${{ matrix.platform }}"
+        if [ "${{ matrix.container }}" = "ubuntu:20.04" ]; then
+          echo "Container: Ubuntu 20.04 (GLIBC 2.31)"
+          echo "GLIBC version: $(ldd --version | head -1)"
+        fi
         echo "========================================"
 
-    # 安装Python依赖，修复distutils问题
-    - name: Install Python dependencies
+    # 安装Python依赖，修复distutils问题 (非 Linux)
+    - name: Install Python dependencies (non-Linux)
+      if: matrix.container != 'ubuntu:20.04'
       shell: bash
       run: |
         python -m pip install --upgrade pip
@@ -140,6 +194,13 @@ jobs:
         CGO_ENABLED: 1
       run: |
         echo "=== Building Go shared library for ${{ matrix.platform }} ==="
+        
+        # 设置 Go 环境 (Linux 容器中)
+        if [ "${{ matrix.container }}" = "ubuntu:20.04" ]; then
+          export PATH="/usr/local/go/bin:$PATH"
+          export GOROOT="/usr/local/go"
+        fi
+        
         cd cgo
         
         # Initialize Go module and download dependencies
@@ -181,7 +242,7 @@ jobs:
         npm_config_target_platform: ${{ matrix.go_os }}
         npm_config_cache: /tmp/.npm
         npm_config_build_from_source: true
-        PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+        PYTHON: ${{ (runner.os == 'Windows' || matrix.container == 'ubuntu:20.04') && 'python3' || 'python3' }}
       run: |
         echo "=== Building Node.js addon for ${{ matrix.platform }} ==="
         cd addon
@@ -196,6 +257,12 @@ jobs:
           exit 1
         fi
         echo "✅ Correct MODULE_VERSION 93 detected"
+        
+        # 显示构建环境信息
+        if [ "${{ matrix.container }}" = "ubuntu:20.04" ]; then
+          echo "🐧 Building in Ubuntu 20.04 container (GLIBC 2.31)"
+          echo "GLIBC version: $(ldd --version | head -1)"
+        fi
         echo "========================================="
         
         # 验证Python环境
@@ -264,7 +331,7 @@ jobs:
   combine:
     name: Combine Prebuilds
     needs: build
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
