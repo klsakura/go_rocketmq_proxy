@@ -10,7 +10,6 @@
         "."
       ],
       "defines": [
-        "NAPI_DISABLE_CPP_EXCEPTIONS"
       ],
       "cflags_cc": [
         "-std=c++14",
@@ -28,7 +27,8 @@
             "MACOSX_DEPLOYMENT_TARGET": "10.7",
             "OTHER_CPLUSPLUSFLAGS": [
               "-std=c++14",
-              "-stdlib=libc++"
+              "-stdlib=libc++",
+              "-fexceptions"
             ]
           }
         }],
@@ -38,7 +38,8 @@
           ],
           "cflags_cc": [
             "-std=c++14",
-            "-fPIC"
+            "-fPIC",
+            "-fexceptions"
           ]
         }],
         ["OS=='win'", {
