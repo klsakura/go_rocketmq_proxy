@@ -518,11 +518,62 @@ namespace rocketmq_addon
             {
                 std::string resultStr(result);
                 go_FreeString(result);
-                return Napi::String::New(env, resultStr);
+
+                // 尝试解析Go函数返回的JSON
+                try
+                {
+                    // 获取全局对象
+                    Napi::Object global = env.Global();
+
+                    // 获取JSON对象
+                    Napi::Object json = global.Get("JSON").As<Napi::Object>();
+
+                    // 调用JSON.parse
+                    Napi::Function parse = json.Get("parse").As<Napi::Function>();
+                    Napi::Value parsed = parse.Call(json, {Napi::String::New(env, resultStr)});
+
+                    if (parsed.IsObject())
+                    {
+                        // 返回解析后的对象
+                        return parsed.As<Napi::Object>();
+                    }
+                }
+                catch (const std::exception &e)
+                {
+                    std::cerr << "Failed to parse Go response as JSON: " << e.what() << std::endl;
+                }
+
+                // 如果JSON解析失败，按照旧逻辑处理
+                Napi::Object returnObj = Napi::Object::New(env);
+                if (!resultStr.empty() && resultStr.find("error") == std::string::npos && resultStr.find("Error") == std::string::npos)
+                {
+                    returnObj.Set("success", Napi::Boolean::New(env, true));
+                    returnObj.Set("message", Napi::String::New(env, "Consumer created successfully"));
+                    returnObj.Set("consumerId", Napi::String::New(env, resultStr));
+                    returnObj.Set("topic", Napi::String::New(env, topic));
+                    returnObj.Set("groupId", Napi::String::New(env, groupId));
+                }
+                else
+                {
+                    returnObj.Set("success", Napi::Boolean::New(env, false));
+                    returnObj.Set("message", Napi::String::New(env, resultStr));
+                }
+                return returnObj;
+            }
+            else
+            {
+                Napi::Object returnObj = Napi::Object::New(env);
+                returnObj.Set("success", Napi::Boolean::New(env, false));
+                returnObj.Set("message", Napi::String::New(env, "Go function returned null"));
+                return returnObj;
             }
         }
 
-        return env.Null();
+        // 参数错误
+        Napi::Object errorObj = Napi::Object::New(env);
+        errorObj.Set("success", Napi::Boolean::New(env, false));
+        errorObj.Set("message", Napi::String::New(env, "Invalid parameters: expected config, topic, groupId, and tagExpression strings"));
+        return errorObj;
     }
 
     Napi::Value RocketMQClient::StartConsumer(const Napi::CallbackInfo &info)

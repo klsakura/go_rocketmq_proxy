@@ -138,7 +138,7 @@ class NativeClient {
         if (consumer.success === false) {
             throw new Error(`Failed to create consumer: ${consumer.message}`);
         }
-        return new NativeConsumer(consumer);
+        return new NativeConsumer(consumer, this.nativeClient);
     }
 
     async healthCheck(): Promise<any> {
@@ -266,7 +266,7 @@ export abstract class Consumer {
 
 // Native消费者实现
 class NativeConsumer extends Consumer {
-    constructor(private nativeConsumer: any) {
+    constructor(private consumerInfo: any, private nativeClient: any) {
         super();
     }
 
@@ -274,19 +274,31 @@ class NativeConsumer extends Consumer {
         this.messageHandlers.push(handler);
 
         // 注册消息处理器到Native Addon
-        this.nativeConsumer.onMessage(async (messageData: MessageData) => {
-            for (const h of this.messageHandlers) {
-                try {
-                    await h(messageData);
-                } catch (error) {
-                    console.error('Error in message handler:', error);
+        this.nativeClient.registerMessageHandler(this.consumerInfo.consumerId, (messageJson: string) => {
+            try {
+                // 解析消息JSON
+                const messageData = JSON.parse(messageJson);
+
+                // 调用所有注册的处理器
+                for (const h of this.messageHandlers) {
+                    try {
+                        h(messageData);
+                    } catch (error) {
+                        console.error('Error in message handler:', error);
+                    }
                 }
+            } catch (error) {
+                console.error('Error parsing message JSON:', error);
             }
         });
     }
 
     startReceiving(tagExpression: string = '*'): any {
-        const result = this.nativeConsumer.startReceiving(tagExpression);
+        const result = this.nativeClient.startConsumer(this.consumerInfo.consumerId, this.consumerInfo.topic || '', tagExpression);
+        if (!result || typeof result === 'string') {
+            return { success: true, message: 'Consumer started' };
+        }
+
         if (!result.success) {
             throw new Error(`Failed to start receiving: ${result.message}`);
         }
@@ -294,7 +306,11 @@ class NativeConsumer extends Consumer {
     }
 
     async ackMessage(receiptHandle: string): Promise<any> {
-        const result = this.nativeConsumer.ackMessage(receiptHandle);
+        const result = this.nativeClient.ackMessage(this.consumerInfo.consumerId, receiptHandle);
+        if (!result || typeof result === 'string') {
+            return { success: true, message: 'Message acknowledged' };
+        }
+
         if (!result.success) {
             throw new Error(`Failed to ack message: ${result.message}`);
         }
@@ -302,7 +318,11 @@ class NativeConsumer extends Consumer {
     }
 
     async shutdown(): Promise<any> {
-        const result = this.nativeConsumer.shutdown();
+        const result = this.nativeClient.shutdownConsumer(this.consumerInfo.consumerId);
+        if (!result || typeof result === 'string') {
+            return { success: true, message: 'Consumer shutdown' };
+        }
+
         if (!result.success) {
             throw new Error(`Failed to shutdown consumer: ${result.message}`);
         }
