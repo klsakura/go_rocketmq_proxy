@@ -63,6 +63,8 @@ export class MessageProperties {
 
     startDeliverTime(time: number): MessageProperties {
         this.start_deliver_time = Number(time);
+        // 同时设置RocketMQ标准属性
+        this.properties['__STARTDELIVERTIME'] = String(time);
         return this;
     }
 
@@ -72,13 +74,19 @@ export class MessageProperties {
     }
 
     toJSON(): any {
-        return {
+        const result: any = {
             properties: this.properties,
             messageKey: this.message_key,
             shardingKey: this.sharding_key,
-            startDeliverTime: this.start_deliver_time,
             transCheckImmunityTime: this.trans_check_immunity_time
         };
+
+        // 只有在没有设置 __STARTDELIVERTIME 属性时才包含 startDeliverTime
+        if (!this.properties['__STARTDELIVERTIME'] && this.start_deliver_time > 0) {
+            result.startDeliverTime = this.start_deliver_time;
+        }
+
+        return result;
     }
 }
 
@@ -213,9 +221,14 @@ class NativeProducer extends Producer {
     async publishDelayMessage(messageBody: any, tag: string = '', properties: MessageProperties | null = null, options: DelayOptions = {}): Promise<SendResult> {
         // 对于延迟消息，将延迟时间设置到properties中
         const props: any = properties ? properties.toJSON() : {};
+
+        // RocketMQ任意精度延迟消息：使用 __STARTDELIVERTIME 属性
         if (options.startDeliverTime) {
-            props.startDeliverTime = options.startDeliverTime;
+            props.properties = props.properties || {};
+            props.properties['__STARTDELIVERTIME'] = String(options.startDeliverTime);
         }
+
+        // RocketMQ传统延迟等级：使用 delayTimeLevel
         if (options.delayTimeLevel) {
             props.delayTimeLevel = options.delayTimeLevel;
         }
