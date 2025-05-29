@@ -2,8 +2,8 @@ name: Build Prebuilt Binaries
 
 # Build Version: 2024-12-19 - Rebuild all platforms with Node.js 16
 # Node.js Compatibility:
-# - Built with Node.js 16.20.2 for optimal compatibility with Node.js 16+
-# - Native addons built with Node.js 16.20.2 are compatible with Node.js 16-22
+# - Built with Node.js 16.19.0 for optimal compatibility with Node.js 16+
+# - Native addons built with Node.js 16.19.0 are compatible with Node.js 16-22
 # - Full Apple Silicon support and modern JavaScript features
 # - Using NAN for Native Addon abstraction layer
 
@@ -30,14 +30,14 @@ jobs:
             arch: arm64
             go_os: darwin
             go_arch: arm64
-            node-version: '16.20.2'
+            node-version: '16.19.0'
             
           - platform: darwin-x64
             os: macos-latest
             arch: x64
             go_os: darwin
             go_arch: amd64
-            node-version: '16.20.2'
+            node-version: '16.19.0'
             
           # Linux builds
           - platform: linux-x64
@@ -45,7 +45,7 @@ jobs:
             arch: x64
             go_os: linux
             go_arch: amd64
-            node-version: '16.20.2'
+            node-version: '16.19.0'
             
           # Windows builds
           - platform: win32-x64
@@ -53,7 +53,7 @@ jobs:
             arch: x64
             go_os: windows
             go_arch: amd64
-            node-version: '16.20.2'
+            node-version: '16.19.0'
 
     steps:
     - name: Checkout code
@@ -236,14 +236,14 @@ jobs:
       run: |
         mkdir -p node-client-v2/prebuilds
         
-        # Copy all platform builds for Node.js 16.20.2
+        # Copy all platform builds for Node.js 16.19.0
         for platform in darwin-arm64 darwin-x64 linux-x64 win32-x64; do
-          if [ -d "artifacts/prebuilds-$platform-node16.20.2" ]; then
+          if [ -d "artifacts/prebuilds-$platform-node16.19.0" ]; then
             mkdir -p "node-client-v2/prebuilds/$platform"
-            cp -r "artifacts/prebuilds-$platform-node16.20.2/"* "node-client-v2/prebuilds/$platform/"
-            echo "✅ Copied $platform prebuilds (Node.js 16.20.2)"
+            cp -r "artifacts/prebuilds-$platform-node16.19.0/"* "node-client-v2/prebuilds/$platform/"
+            echo "✅ Copied $platform prebuilds (Node.js 16.19.0)"
           else
-            echo "⚠️  Missing $platform prebuilds (Node.js 16.20.2)"
+            echo "⚠️  Missing $platform prebuilds (Node.js 16.19.0)"
           fi
         done
         
@@ -253,7 +253,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '16.20.2'
+        node-version: '16.19.0'
 
     - name: Build TypeScript SDK
       run: |
