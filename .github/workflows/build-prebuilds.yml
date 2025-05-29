@@ -2,8 +2,9 @@ name: Build Prebuilt Binaries
 
 # Build Version: 2024-12-19 - Rebuild all platforms with Node.js 16
 # Node.js Compatibility:
-# - Built with Node.js 16.20.2 for optimal compatibility with Node.js 14+
-# - Native addons built with Node.js 16.20.2 are compatible with Node.js 14-20
+# - Built with Node.js 16.20.2 for optimal compatibility with Node.js 16+
+# - Native addons built with Node.js 16.20.2 are compatible with Node.js 16-22
+# - Full Apple Silicon support and modern JavaScript features
 # - Using NAN for Native Addon abstraction layer
 
 on:

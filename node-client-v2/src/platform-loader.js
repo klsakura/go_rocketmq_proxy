@@ -10,11 +10,11 @@ function checkNodeVersionCompatibility() {
     const majorVersion = parseInt(nodeVersion.split('.')[0]);
     const minorVersion = parseInt(nodeVersion.split('.')[1]);
 
-    // 检查最低版本要求：Node.js 14.0.0
-    if (majorVersion < 14) {
+    // 检查最低版本要求：Node.js 16.0.0
+    if (majorVersion < 16) {
         throw new Error(
             `Node.js version ${nodeVersion} is not supported.\n` +
-            `Minimum required version: 14.0.0\n` +
+            `Minimum required version: 16.0.0\n` +
             `Please upgrade Node.js: https://nodejs.org/`
         );
     }

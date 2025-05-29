@@ -4,11 +4,11 @@
 
 ## 📋 Requirements
 
-- **Node.js 14.0.0+** - Minimum required version
+- **Node.js 16.0.0+** - Minimum required version
 - **Supported Platforms**: macOS (ARM64/x64), Linux (x64), Windows (x64)
 - **Automatic Installation**: No build tools required - precompiled binaries included
 
-> 💡 **Recommended**: Node.js 16+ for best experience and full ESM support
+> 💡 **Recommended**: Node.js 18+ for best experience and full ESM support
 
 ## ✨ Features
 
@@ -58,12 +58,12 @@ npm install @klsakura/rocketmq-native-sdk
 ### Prerequisites
 
 **For End Users (Recommended):**
-- **Node.js 14.0.0+** - No additional tools required!
+- **Node.js 16.0.0+** - No additional tools required!
 - **Automatic platform detection** - Works out of the box
 
 **For Development/Building from Source:**
 1. **Go 1.21+** (for building the shared library)
-2. **Node.js 14.0.0+** with native addon support  
+2. **Node.js 16.0.0+** with native addon support  
 3. **C++ compiler** (for building the addon)
 4. **Python 3.x** (for node-gyp)
 
