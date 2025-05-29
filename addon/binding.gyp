@@ -9,9 +9,6 @@
         "<!(node -e \"require('nan')\")",
         "."
       ],
-      "libraries": [
-        "-ldl"
-      ],
       "cflags_cc": [
         "-std=c++14",
         "-fPIC",
@@ -19,6 +16,9 @@
       ],
       "conditions": [
         ["OS=='mac'", {
+          "libraries": [
+            "-ldl"
+          ],
           "xcode_settings": {
             "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
             "CLANG_CXX_LIBRARY": "libc++",
@@ -30,10 +30,21 @@
           }
         }],
         ["OS=='linux'", {
+          "libraries": [
+            "-ldl"
+          ],
           "cflags_cc": [
             "-std=c++14",
             "-fPIC"
           ]
+        }],
+        ["OS=='win'", {
+          "libraries": [],
+          "msvs_settings": {
+            "VCCLCompilerTool": {
+              "ExceptionHandling": 1
+            }
+          }
         }]
       ]
     }
