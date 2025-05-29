@@ -136,6 +136,7 @@ jobs:
 
     # 验证Node.js版本，确保编译正确
     - name: Verify Node.js version
+      shell: bash
       run: |
         echo "=== Node.js Environment Verification ==="
         node --version
