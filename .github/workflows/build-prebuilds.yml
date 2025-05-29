@@ -222,18 +222,16 @@ jobs:
           echo "Configuring for ARM64..."
           
           # Create a temporary gyp include file to override settings
-          cat > arm64.gypi << 'EOF'
-{
-  'target_defaults': {
-    'cflags!': ['-m64'],
-    'cflags_cc!': ['-m64'],
-    'ldflags!': ['-m64'],
-    'cflags': ['-march=armv8-a', '-fPIC'],
-    'cflags_cc': ['-march=armv8-a', '-fPIC', '-std=c++14'],
-    'ldflags': ['-march=armv8-a']
-  }
-}
-EOF
+          echo "{" > arm64.gypi
+          echo "  'target_defaults': {" >> arm64.gypi
+          echo "    'cflags!': ['-m64']," >> arm64.gypi
+          echo "    'cflags_cc!': ['-m64']," >> arm64.gypi
+          echo "    'ldflags!': ['-m64']," >> arm64.gypi
+          echo "    'cflags': ['-march=armv8-a', '-fPIC']," >> arm64.gypi
+          echo "    'cflags_cc': ['-march=armv8-a', '-fPIC', '-std=c++14']," >> arm64.gypi
+          echo "    'ldflags': ['-march=armv8-a']" >> arm64.gypi
+          echo "  }" >> arm64.gypi
+          echo "}" >> arm64.gypi
           
           ./node_modules/.bin/node-gyp clean
           ./node_modules/.bin/node-gyp configure --target_arch=arm64 --target_platform=linux -I arm64.gypi
