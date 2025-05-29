@@ -52,6 +52,42 @@ namespace rocketmq_addon
     static char *(*go_ShutdownConsumer)(const char *) = nullptr;
     static void (*go_FreeString)(char *) = nullptr;
 
+    // 获取addon模块所在目录的函数
+    std::string GetAddonDirectory()
+    {
+#ifdef _WIN32
+        HMODULE hModule = NULL;
+        if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                  GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                              (LPCTSTR)GetAddonDirectory, &hModule))
+        {
+            char path[MAX_PATH];
+            if (GetModuleFileName(hModule, path, MAX_PATH))
+            {
+                std::string fullPath(path);
+                size_t lastSlash = fullPath.find_last_of('\\');
+                if (lastSlash != std::string::npos)
+                {
+                    return fullPath.substr(0, lastSlash);
+                }
+            }
+        }
+        return ".";
+#else
+        Dl_info info;
+        if (dladdr((void *)GetAddonDirectory, &info) && info.dli_fname)
+        {
+            std::string fullPath(info.dli_fname);
+            size_t lastSlash = fullPath.find_last_of('/');
+            if (lastSlash != std::string::npos)
+            {
+                return fullPath.substr(0, lastSlash);
+            }
+        }
+        return ".";
+#endif
+    }
+
     // 加载Go动态库
     bool LoadGoLibrary()
     {
@@ -60,20 +96,25 @@ namespace rocketmq_addon
             return true; // 已经加载
         }
 
-#ifdef _WIN32
-        // Windows路径 - 添加prebuilds目录
-        const char *lib_paths[] = {
-            "..\\prebuilds\\win32-x64\\librocketmq_cgo.dll",
-            ".\\librocketmq_cgo.dll",
-            "..\\cgo\\librocketmq_cgo.dll",
-            "librocketmq_cgo.dll",
-            nullptr};
+        // 获取addon所在目录
+        std::string addonDir = GetAddonDirectory();
 
-        for (int i = 0; lib_paths[i] != nullptr; i++)
+#ifdef _WIN32
+        // Windows路径 - 基于addon位置动态构建路径
+        std::vector<std::string> lib_paths = {
+            addonDir + "\\librocketmq_cgo.dll",                           // 同目录 (npm包)
+            addonDir + "\\..\\prebuilds\\win32-x64\\librocketmq_cgo.dll", // npm包结构
+            ".\\librocketmq_cgo.dll",                                     // 当前工作目录
+            "..\\cgo\\librocketmq_cgo.dll",                               // 开发环境
+            "librocketmq_cgo.dll"                                         // 系统PATH
+        };
+
+        for (const auto &lib_path : lib_paths)
         {
-            go_lib_handle = LoadLibraryA(lib_paths[i]);
+            go_lib_handle = LoadLibraryA(lib_path.c_str());
             if (go_lib_handle != nullptr)
             {
+                std::cout << "✅ Loaded Go library: " << lib_path << std::endl;
                 break;
             }
         }
@@ -109,29 +150,42 @@ namespace rocketmq_addon
             return false;
         }
 #else
-        // Unix路径 - 添加prebuilds目录和平台特定扩展名
+        // Unix路径 - 基于addon位置动态构建路径
+        std::vector<std::string> lib_paths;
+
 #ifdef __APPLE__
-        const char *lib_paths[] = {
-            "../prebuilds/darwin-arm64/librocketmq_cgo.dylib",
-            "../prebuilds/darwin-x64/librocketmq_cgo.dylib",
-            "./librocketmq_cgo.dylib",
-            "../cgo/librocketmq_cgo.dylib",
-            "/usr/local/lib/librocketmq_cgo.dylib",
-            nullptr};
+        // macOS动态库路径
+        lib_paths = {
+            addonDir + "/librocketmq_cgo.dylib",                           // 同目录 (npm包)
+            addonDir + "/../prebuilds/darwin-arm64/librocketmq_cgo.dylib", // npm包结构 (ARM64)
+            addonDir + "/../prebuilds/darwin-x64/librocketmq_cgo.dylib",   // npm包结构 (x64)
+            "./librocketmq_cgo.dylib",                                     // 当前工作目录
+            "./prebuilds/darwin-arm64/librocketmq_cgo.dylib",              // 开发环境
+            "./prebuilds/darwin-x64/librocketmq_cgo.dylib",                // 开发环境
+            "../prebuilds/darwin-arm64/librocketmq_cgo.dylib",             // 开发环境
+            "../prebuilds/darwin-x64/librocketmq_cgo.dylib",               // 开发环境
+            "../cgo/librocketmq_cgo.dylib",                                // 开发目录
+            "/usr/local/lib/librocketmq_cgo.dylib"                         // 系统安装
+        };
 #else
-        const char *lib_paths[] = {
-            "../prebuilds/linux-x64/librocketmq_cgo.so",
-            "./librocketmq_cgo.so",
-            "../cgo/librocketmq_cgo.so",
-            "/usr/local/lib/librocketmq_cgo.so",
-            nullptr};
+        // Linux动态库路径
+        lib_paths = {
+            addonDir + "/librocketmq_cgo.so",                        // 同目录 (npm包)
+            addonDir + "/../prebuilds/linux-x64/librocketmq_cgo.so", // npm包结构
+            "./librocketmq_cgo.so",                                  // 当前工作目录
+            "./prebuilds/linux-x64/librocketmq_cgo.so",              // 开发环境
+            "../prebuilds/linux-x64/librocketmq_cgo.so",             // 开发环境
+            "../cgo/librocketmq_cgo.so",                             // 开发目录
+            "/usr/local/lib/librocketmq_cgo.so"                      // 系统安装
+        };
 #endif
 
-        for (int i = 0; lib_paths[i] != nullptr; i++)
+        for (const auto &lib_path : lib_paths)
         {
-            go_lib_handle = dlopen(lib_paths[i], RTLD_LAZY);
+            go_lib_handle = dlopen(lib_path.c_str(), RTLD_LAZY);
             if (go_lib_handle != nullptr)
             {
+                std::cout << "✅ Loaded Go library: " << lib_path << std::endl;
                 break;
             }
         }

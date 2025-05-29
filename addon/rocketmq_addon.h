@@ -18,6 +18,8 @@
 #include <map>
 #include <memory>
 #include <functional>
+#include <vector>
+#include <iostream>
 
 #ifdef _WIN32
 #include <windows.h>
