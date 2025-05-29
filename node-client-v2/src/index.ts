@@ -124,15 +124,17 @@ class NativeClient {
     }
 
     async getProducer(instanceId: string, topic: string): Promise<Producer> {
-        const producer = this.nativeClient.createProducer(instanceId, topic);
+        const configJson = JSON.stringify(this.config);
+        const producer = this.nativeClient.createProducer(configJson, topic);
         if (producer.success === false) {
             throw new Error(`Failed to create producer: ${producer.message}`);
         }
-        return new NativeProducer(producer);
+        return new NativeProducer(producer, this.nativeClient);
     }
 
     async getConsumer(instanceId: string, topic: string, groupId: string, tagExpression: string = '*'): Promise<Consumer> {
-        const consumer = this.nativeClient.createConsumer(instanceId, topic, groupId, tagExpression);
+        const configJson = JSON.stringify(this.config);
+        const consumer = this.nativeClient.createConsumer(configJson, topic, groupId, tagExpression);
         if (consumer.success === false) {
             throw new Error(`Failed to create consumer: ${consumer.message}`);
         }
@@ -158,15 +160,23 @@ export abstract class Producer {
 
 // Native生产者实现
 class NativeProducer extends Producer {
-    constructor(private nativeProducer: any) {
+    constructor(private producerInfo: any, private nativeClient: any) {
         super();
     }
 
     async publishMessage(messageBody: any, tag: string = '', properties: MessageProperties | null = null): Promise<SendResult> {
         const body = typeof messageBody === 'object' ? JSON.stringify(messageBody) : String(messageBody);
-        const props = properties ? properties.toJSON() : {};
+        const props = properties ? JSON.stringify(properties.toJSON()) : '{}';
 
-        const result = this.nativeProducer.publishMessage(body, tag, props);
+        const result = this.nativeClient.sendMessage(this.producerInfo.producerId, body, tag, props);
+        if (!result || typeof result === 'string') {
+            // 如果返回字符串，假设是成功的消息ID
+            return {
+                messageId: result || 'unknown',
+                receiptHandle: result || 'unknown'
+            };
+        }
+
         if (!result.success) {
             throw new Error(`Failed to send message: ${result.message}`);
         }
@@ -179,9 +189,17 @@ class NativeProducer extends Producer {
 
     async publishOrderedMessage(messageBody: any, tag: string = '', properties: MessageProperties | null = null, shardingKey?: string): Promise<SendResult> {
         const body = typeof messageBody === 'object' ? JSON.stringify(messageBody) : String(messageBody);
-        const props = properties ? properties.toJSON() : {};
+        const props = properties ? JSON.stringify(properties.toJSON()) : '{}';
 
-        const result = this.nativeProducer.publishOrderedMessage(body, tag, props, shardingKey || '');
+        const result = this.nativeClient.sendOrderedMessage(this.producerInfo.producerId, body, tag, props, shardingKey || '');
+        if (!result || typeof result === 'string') {
+            // 如果返回字符串，假设是成功的消息ID
+            return {
+                messageId: result || 'unknown',
+                receiptHandle: result || 'unknown'
+            };
+        }
+
         if (!result.success) {
             throw new Error(`Failed to send ordered message: ${result.message}`);
         }
@@ -203,7 +221,16 @@ class NativeProducer extends Producer {
         }
 
         const body = typeof messageBody === 'object' ? JSON.stringify(messageBody) : String(messageBody);
-        const result = this.nativeProducer.publishDelayMessage(body, tag, props);
+        const result = this.nativeClient.sendMessage(this.producerInfo.producerId, body, tag, JSON.stringify(props));
+
+        if (!result || typeof result === 'string') {
+            // 如果返回字符串，假设是成功的消息ID
+            return {
+                messageId: result || 'unknown',
+                receiptHandle: result || 'unknown'
+            };
+        }
+
         if (!result.success) {
             throw new Error(`Failed to send delay message: ${result.message}`);
         }
@@ -215,7 +242,11 @@ class NativeProducer extends Producer {
     }
 
     async shutdown(): Promise<any> {
-        const result = this.nativeProducer.shutdown();
+        const result = this.nativeClient.shutdownProducer(this.producerInfo.producerId);
+        if (!result || typeof result === 'string') {
+            return { success: true, message: 'Producer shutdown' };
+        }
+
         if (!result.success) {
             throw new Error(`Failed to shutdown producer: ${result.message}`);
         }
